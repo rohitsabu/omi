@@ -1,8 +1,8 @@
 import Foundation
 
 /// Manages a long-lived Node.js subprocess running the ACP (Agent Client Protocol) bridge.
-/// This is the sole bridge for AI chat — supports both OMI's API key (passApiKey=true)
-/// and user's own Claude account via OAuth (passApiKey=false).
+/// Used when the user selects "Claude Account" mode (their own OAuth credentials).
+/// The default "Omi AI" mode uses the pi-mono harness instead (no ACP subprocess).
 /// Communication uses JSON lines over stdin/stdout pipes.
 actor ACPBridge {
 
