@@ -67,7 +67,7 @@ pub struct Config {
     pub agent_gcs_bucket: Option<String>,
     /// Deepgram API key for transcription (served to desktop clients)
     pub deepgram_api_key: Option<String>,
-    /// Anthropic API key for chat (served to desktop clients)
+    /// Anthropic API key for chat (server-side only, used by /v2/chat/completions proxy)
     pub anthropic_api_key: Option<String>,
     /// ElevenLabs API key for TTS proxy (used server-side by /v1/tts/synthesize, never served to clients)
     pub elevenlabs_api_key: Option<String>,
