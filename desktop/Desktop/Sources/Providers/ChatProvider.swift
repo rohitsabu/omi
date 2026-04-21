@@ -757,7 +757,6 @@ A screenshot may be attached — use it silently only if relevant. Never mention
         }
         guard !acpBridgeStarted else { return true }
         // Wait for API keys (Firebase, Calendar) before starting the bridge.
-        // ANTHROPIC_API_KEY is no longer served to clients (issue #6594).
         await APIKeyService.shared.waitForKeys()
         do {
             await preparePromptContextIfNeeded()
