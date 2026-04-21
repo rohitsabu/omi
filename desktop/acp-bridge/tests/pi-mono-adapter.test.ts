@@ -30,7 +30,6 @@ vi.mock("child_process", async () => {
 
 function createAdapter() {
   const config: HarnessConfig = {
-    passApiKey: false,
     authToken: "test-token",
   };
   const adapter = new PiMonoAdapter(config);
