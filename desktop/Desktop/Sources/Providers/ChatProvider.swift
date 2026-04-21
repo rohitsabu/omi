@@ -756,12 +756,9 @@ A screenshot may be attached — use it silently only if relevant. Never mention
             }
         }
         guard !acpBridgeStarted else { return true }
-        // Wait for API keys before starting the bridge — the subprocess reads
-        // ANTHROPIC_API_KEY from environment on launch. Without this, Mode B
-        // (no key / OAuth) is used even when the user should be on Mode A.
-        if acpBridge.passApiKey {
-            await APIKeyService.shared.waitForKeys()
-        }
+        // Wait for API keys (Firebase, Calendar) before starting the bridge.
+        // ANTHROPIC_API_KEY is no longer served to clients (issue #6594).
+        await APIKeyService.shared.waitForKeys()
         do {
             await preparePromptContextIfNeeded()
             try await acpBridge.start()
