@@ -1,5 +1,7 @@
 {
-  "unreleased": [],
+  "unreleased": [
+    "Removed Anthropic API key from client, added Omi AI branding in Settings, improved harness switching"
+  ],
   "releases": [
     {
       "version": "0.11.352",
