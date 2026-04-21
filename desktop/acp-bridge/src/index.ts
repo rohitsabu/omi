@@ -1130,8 +1130,6 @@ async function runPiMonoMode(): Promise<void> {
   logErr("omi-tools relay started for pi-mono");
 
   const config = {
-    passApiKey: false,
-    apiKey: undefined,
     omiApiBaseUrl: process.env.OMI_API_BASE_URL,
     authToken: omiAuthToken,
   };
