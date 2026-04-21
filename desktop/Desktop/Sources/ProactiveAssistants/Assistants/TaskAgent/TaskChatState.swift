@@ -129,9 +129,8 @@ class TaskChatState: ObservableObject {
         guard !bridgeStarted else { return true }
         do {
             let mode = UserDefaults.standard.string(forKey: "chatBridgeMode") ?? "piMono"
-            let useOmiKey = mode != "claudeCode"
             let harness = mode == "piMono" ? "piMono" : "acp"
-            let bridge = ACPBridge(passApiKey: useOmiKey, harnessMode: harness)
+            let bridge = ACPBridge(harnessMode: harness)
             try await bridge.start()
             acpBridge = bridge
             bridgeStarted = true

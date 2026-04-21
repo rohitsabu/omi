@@ -183,7 +183,7 @@ actor CalendarReaderService {
       """
 
     do {
-      let bridge = ACPBridge(passApiKey: true, harnessMode: "piMono")
+      let bridge = ACPBridge(harnessMode: "piMono")
       try await bridge.start()
       defer { Task { await bridge.stop() } }
 
