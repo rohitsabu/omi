@@ -2337,13 +2337,25 @@ struct SettingsContentView: View {
             }
           }
 
-          Text(
-            chatBridgeMode == "claudeCode"
-              ? "Using your Claude Pro/Max subscription. You'll be prompted to sign in with your Claude account."
-              : "Using your Omi account. All inference routed through api.omi.me."
-          )
-          .scaledFont(size: 12)
-          .foregroundColor(OmiColors.textTertiary)
+          if chatBridgeMode == "piMono" {
+            HStack(spacing: 6) {
+              if let logoURL = Bundle.resourceBundle.url(forResource: "herologo", withExtension: "png"),
+                let logoImage = NSImage(contentsOf: logoURL)
+              {
+                Image(nsImage: logoImage)
+                  .resizable()
+                  .aspectRatio(contentMode: .fit)
+                  .frame(width: 16, height: 16)
+              }
+              Text("Powered by Omi AI — inference routed through api.omi.me")
+                .scaledFont(size: 12)
+                .foregroundColor(OmiColors.textTertiary)
+            }
+          } else {
+            Text("Using your Claude Pro/Max subscription. You'll be prompted to sign in with your Claude account.")
+              .scaledFont(size: 12)
+              .foregroundColor(OmiColors.textTertiary)
+          }
 
           if chatBridgeMode == "claudeCode" && chatProvider?.isClaudeConnected == true {
             Divider()
@@ -3160,13 +3172,25 @@ struct SettingsContentView: View {
             }
           }
 
-          Text(
-            chatBridgeMode == "claudeCode"
-              ? "Use your Claude subscription for desktop chat."
-              : "Use your Omi account for desktop chat."
-          )
-          .scaledFont(size: 12)
-          .foregroundColor(OmiColors.textTertiary)
+          if chatBridgeMode == "piMono" {
+            HStack(spacing: 6) {
+              if let logoURL = Bundle.resourceBundle.url(forResource: "herologo", withExtension: "png"),
+                let logoImage = NSImage(contentsOf: logoURL)
+              {
+                Image(nsImage: logoImage)
+                  .resizable()
+                  .aspectRatio(contentMode: .fit)
+                  .frame(width: 16, height: 16)
+              }
+              Text("Powered by Omi AI")
+                .scaledFont(size: 12)
+                .foregroundColor(OmiColors.textTertiary)
+            }
+          } else {
+            Text("Use your Claude subscription for desktop chat.")
+              .scaledFont(size: 12)
+              .foregroundColor(OmiColors.textTertiary)
+          }
 
           if chatBridgeMode == "claudeCode" && chatProvider?.isClaudeConnected == true {
             Divider()
