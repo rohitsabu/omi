@@ -501,23 +501,22 @@ A screenshot may be attached — use it silently only if relevant. Never mention
     /// When true, user can create multiple chat sessions
     @AppStorage("multiChatEnabled") var multiChatEnabled = false
 
-    // MARK: - Bridge (ACP-only, passApiKey controls OMI vs user's account)
+    // MARK: - Bridge
     // NOTE: initialized lazily so it reads the persisted bridgeMode from UserDefaults,
     // not always defaulting to Omi mode on cold start.
     //
     // Default harness: piMono (Omi AI via the bundled pi-mono subprocess, authenticated
     // with the user's Firebase ID token). Claude Code remains as an opt-in harness that
-    // uses the user's own API key/env.
+    // uses the user's own Claude OAuth.
     private lazy var acpBridge: ACPBridge = {
         let mode = UserDefaults.standard.string(forKey: "chatBridgeMode") ?? BridgeMode.piMono.rawValue
-        let useOmiKey = mode != BridgeMode.userClaude.rawValue
         let harness = mode == BridgeMode.piMono.rawValue ? "piMono" : "acp"
-        return ACPBridge(passApiKey: useOmiKey, harnessMode: harness)
+        return ACPBridge(harnessMode: harness)
     }()
     private var acpBridgeStarted = false
 
     enum BridgeMode: String {
-        case omiAI = "agentSDK"
+        case omiAI = "agentSDK"     // Legacy, auto-migrated to piMono
         case userClaude = "claudeCode"
         case piMono = "piMono"
     }
@@ -815,23 +814,24 @@ A screenshot may be attached — use it silently only if relevant. Never mention
         await loadSchemaIfNeeded()
     }
 
-    /// Switch between bridge modes (Omi AI, Pi-Mono, or user's Claude account)
+    /// Switch between bridge modes (Omi AI via piMono, or user's Claude OAuth)
     func switchBridgeMode(to mode: BridgeMode) async {
+        // Normalize legacy omiAI to piMono
+        let resolvedMode: BridgeMode = (mode == .omiAI) ? .piMono : mode
         let oldMode = bridgeMode
         // Skip if already in this mode
-        guard mode.rawValue != oldMode else { return }
-        log("ChatProvider: Switching bridge mode from \(bridgeMode) to \(mode.rawValue)")
+        guard resolvedMode.rawValue != oldMode else { return }
+        log("ChatProvider: Switching bridge mode from \(bridgeMode) to \(resolvedMode.rawValue)")
 
         // Stop the current bridge
         await acpBridge.stop()
         acpBridgeStarted = false
 
-        // Switch mode and recreate bridge with appropriate passApiKey
-        // Both omiAI and piMono use Omi's API key; userClaude uses OAuth
-        bridgeMode = mode.rawValue
-        let harness = mode == .piMono ? "piMono" : "acp"
-        acpBridge = ACPBridge(passApiKey: mode != .userClaude, harnessMode: harness)
-        AnalyticsManager.shared.chatBridgeModeChanged(from: oldMode, to: mode.rawValue)
+        // Switch mode and recreate bridge
+        bridgeMode = resolvedMode.rawValue
+        let harness = resolvedMode == .piMono ? "piMono" : "acp"
+        acpBridge = ACPBridge(harnessMode: harness)
+        AnalyticsManager.shared.chatBridgeModeChanged(from: oldMode, to: resolvedMode.rawValue)
 
         // Check Claude connection status when switching to user's Claude account
         if mode == .userClaude {
@@ -927,10 +927,8 @@ A screenshot may be attached — use it silently only if relevant. Never mention
         isClaudeConnected = false
 
         // 5. Switch back to the default Omi harness (pi-mono) and recreate the bridge.
-        //    piMono authenticates with a Firebase ID token; passApiKey is still true
-        //    for consistency with the old Omi-server-side-key flow.
         bridgeMode = BridgeMode.piMono.rawValue
-        acpBridge = ACPBridge(passApiKey: true, harnessMode: "piMono")
+        acpBridge = ACPBridge(harnessMode: "piMono")
     }
 
     // MARK: - Session Management
