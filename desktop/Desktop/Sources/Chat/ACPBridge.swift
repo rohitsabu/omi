@@ -58,11 +58,7 @@ actor ACPBridge {
 
   // MARK: - Configuration
 
-  /// When true, ANTHROPIC_API_KEY is passed through to the ACP subprocess
-  /// (Mode A: OMI's key). When false, the key is stripped so ACP uses OAuth.
-  let passApiKey: Bool
-
-  /// Which harness to use: "acp" (default) or "piMono"
+  /// Which harness to use: "acp" (Claude OAuth) or "piMono" (Omi AI via Firebase token)
   let harnessMode: String
 
   /// Persistent auth handler called whenever auth_required arrives (even outside query)
@@ -78,8 +74,7 @@ actor ACPBridge {
     self.onAuthSuccessGlobal = onAuthSuccess
   }
 
-  init(passApiKey: Bool = false, harnessMode: String = "acp") {
-    self.passApiKey = passApiKey
+  init(harnessMode: String = "piMono") {
     self.harnessMode = harnessMode
   }
 
@@ -147,19 +142,11 @@ actor ACPBridge {
     proc.executableURL = URL(fileURLWithPath: nodePath)
     proc.arguments = ["--max-old-space-size=256", "--max-semi-space-size=16", bridgePath]
 
-    // Build environment — use APIKeyService.currentAnthropicKey (reads getenv + dev overrides)
-    // since ProcessInfo.processInfo.environment is a launch-time snapshot.
+    // Build environment — ANTHROPIC_API_KEY is never passed to subprocesses (issue #6594).
+    // ACP mode uses user's own Claude OAuth; piMono mode uses Firebase token.
     var env = ProcessInfo.processInfo.environment
     env["NODE_NO_WARNINGS"] = "1"
-    if passApiKey {
-      // Mode A: Inject current ANTHROPIC_API_KEY (may have been set after launch by APIKeyService)
-      if let key = APIKeyService.currentAnthropicKey {
-        env["ANTHROPIC_API_KEY"] = key
-      }
-    } else {
-      // Mode B: Strip API key so ACP uses user's own OAuth
-      env.removeValue(forKey: "ANTHROPIC_API_KEY")
-    }
+    env.removeValue(forKey: "ANTHROPIC_API_KEY")
     env.removeValue(forKey: "CLAUDE_CODE_USE_VERTEX")
 
     // Pass harness mode to bridge (acp or piMono)
@@ -196,8 +183,6 @@ actor ACPBridge {
         log("ACPBridge: pi-mono start refused — OMI_API_URL (Rust backend) not configured")
         throw BridgeError.bridgeScriptNotFound
       }
-      // Never forward ANTHROPIC_API_KEY to pi-mono — it auths via Firebase only.
-      env.removeValue(forKey: "ANTHROPIC_API_KEY")
     }
 
     // Ensure the directory containing node is in PATH
