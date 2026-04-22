@@ -511,9 +511,14 @@ A screenshot may be attached — use it silently only if relevant. Never mention
     private lazy var aiBridge: AIBridge = {
         let mode = UserDefaults.standard.string(forKey: "chatBridgeMode") ?? BridgeMode.piMono.rawValue
         let harness = mode == BridgeMode.piMono.rawValue ? "piMono" : "acp"
+        activeBridgeHarness = harness
         return AIBridge(harnessMode: harness)
     }()
     private var aiBridgeStarted = false
+    /// Tracks the harness mode the bridge is actually running (NOT the @AppStorage preference).
+    /// @AppStorage("chatBridgeMode") can be updated by other views sharing the same key,
+    /// so comparing against it in switchBridgeMode() would always match → no-op.
+    private var activeBridgeHarness: String = "piMono"
 
     enum BridgeMode: String {
         case omiAI = "agentSDK"     // Legacy, auto-migrated to piMono
@@ -814,10 +819,12 @@ A screenshot may be attached — use it silently only if relevant. Never mention
     func switchBridgeMode(to mode: BridgeMode) async {
         // Normalize legacy omiAI to piMono
         let resolvedMode: BridgeMode = (mode == .omiAI) ? .piMono : mode
-        let oldMode = bridgeMode
-        // Skip if already in this mode
-        guard resolvedMode.rawValue != oldMode else { return }
-        log("ChatProvider: Switching bridge mode from \(bridgeMode) to \(resolvedMode.rawValue)")
+        let newHarness = resolvedMode == .piMono ? "piMono" : "acp"
+        let previousHarness = activeBridgeHarness
+        // Compare against the actual running harness, NOT @AppStorage (which may
+        // already reflect the new value because another view wrote the same key).
+        guard newHarness != previousHarness else { return }
+        log("ChatProvider: Switching bridge mode from \(previousHarness) to \(resolvedMode.rawValue)")
 
         // Stop the current bridge
         await aiBridge.stop()
@@ -825,9 +832,9 @@ A screenshot may be attached — use it silently only if relevant. Never mention
 
         // Switch mode and recreate bridge
         bridgeMode = resolvedMode.rawValue
-        let harness = resolvedMode == .piMono ? "piMono" : "acp"
-        aiBridge = AIBridge(harnessMode: harness)
-        AnalyticsManager.shared.chatBridgeModeChanged(from: oldMode, to: resolvedMode.rawValue)
+        activeBridgeHarness = newHarness
+        aiBridge = AIBridge(harnessMode: newHarness)
+        AnalyticsManager.shared.chatBridgeModeChanged(from: previousHarness, to: resolvedMode.rawValue)
 
         // Check Claude connection status when switching to user's Claude account
         if mode == .userClaude {
