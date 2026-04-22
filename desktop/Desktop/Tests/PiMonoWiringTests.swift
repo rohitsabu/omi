@@ -152,10 +152,10 @@ final class PiMonoWiringTests: XCTestCase {
   func testAIProviderPiMonoHasCorrectValues() {
     let p = AIProvider.piMono
     XCTAssertEqual(p.id, "piMono")
-    XCTAssertEqual(p.displayName, "pi-mono")
+    XCTAssertEqual(p.displayName, "Omi AI")
     XCTAssertEqual(p.bridgeModeRawValue, "piMono")
     XCTAssertEqual(p.attributionURL?.host, "pi.dev")
-    XCTAssertEqual(p.sfSymbol, "function")
+    XCTAssertEqual(p.sfSymbol, "sparkles")
     XCTAssertFalse(p.tagline.isEmpty)
   }
 
