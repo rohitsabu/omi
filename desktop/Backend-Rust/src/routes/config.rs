@@ -5,6 +5,9 @@
 //   - Deepgram, Gemini: /v1/proxy/deepgram/*, /v1/proxy/gemini/* (issue #5861)
 //   - ElevenLabs: /v1/tts/synthesize (issue #6622)
 //   - Anthropic: kept server-side for /v2/chat/completions proxy only (issue #6594)
+//
+// Legacy compat: DESKTOP_LEGACY_ANTHROPIC_KEY is served as anthropic_api_key for
+// old app versions that still read it. Remove after the next major release.
 
 use axum::{extract::State, routing::get, Json, Router};
 use serde::Serialize;
@@ -18,6 +21,9 @@ struct ApiKeysResponse {
     firebase_api_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     google_calendar_api_key: Option<String>,
+    /// Legacy: served from DESKTOP_LEGACY_ANTHROPIC_KEY for old clients. Deprecated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    anthropic_api_key: Option<String>,
 }
 
 /// GET /v1/config/api-keys — return non-secret config for the authenticated user
@@ -28,6 +34,7 @@ async fn get_api_keys(State(state): State<AppState>, _user: AuthUser) -> Json<Ap
     Json(ApiKeysResponse {
         firebase_api_key: state.config.firebase_api_key.clone(),
         google_calendar_api_key: state.config.google_calendar_api_key.clone(),
+        anthropic_api_key: state.config.desktop_legacy_anthropic_key.clone(),
     })
 }
 
