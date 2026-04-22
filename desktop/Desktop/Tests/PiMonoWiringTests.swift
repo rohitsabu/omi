@@ -74,9 +74,9 @@ final class PiMonoWiringTests: XCTestCase {
   }
 
   // MARK: - Source-level wiring assertions
-  // Ensures no AIBridge(passApiKey:) exists in production code (parameter removed in #6594).
+  // Ensures no AgentBridge(passApiKey:) exists in production code (parameter removed in #6594).
 
-  func testNoAIBridgePassApiKeyInSources() throws {
+  func testNoAgentBridgePassApiKeyInSources() throws {
     let sourcesDir = URL(fileURLWithPath: #filePath)
       .deletingLastPathComponent()  // Tests/
       .deletingLastPathComponent()  // Desktop/
@@ -97,7 +97,7 @@ final class PiMonoWiringTests: XCTestCase {
       guard url.pathExtension == "swift" else { continue }
       let content = try String(contentsOf: url, encoding: .utf8)
       for (i, line) in content.components(separatedBy: .newlines).enumerated() {
-        if line.contains("AIBridge(passApiKey:") {
+        if line.contains("AgentBridge(passApiKey:") {
           let relativePath = url.lastPathComponent
           violations.append("\(relativePath):\(i + 1): \(line.trimmingCharacters(in: .whitespaces))")
         }
@@ -106,7 +106,7 @@ final class PiMonoWiringTests: XCTestCase {
 
     XCTAssertEqual(
       violations, [],
-      "Found AIBridge(passApiKey:) — passApiKey parameter was removed in #6594. Use AIBridge(harnessMode:) instead:\n"
+      "Found AgentBridge(passApiKey:) — passApiKey parameter was removed in #6594. Use AgentBridge(harnessMode:) instead:\n"
         + violations.joined(separator: "\n"))
   }
 
@@ -215,7 +215,7 @@ final class PiMonoWiringTests: XCTestCase {
 
     XCTAssertEqual(
       violations, [],
-      "Found stale ACPBridge/acp-bridge references — renamed to AIBridge/agent in #6594:\n"
+      "Found stale ACPBridge/acp-bridge references — renamed to AgentBridge/agent in #6594:\n"
         + violations.joined(separator: "\n"))
   }
 

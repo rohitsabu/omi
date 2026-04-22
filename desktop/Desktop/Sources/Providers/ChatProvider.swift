@@ -508,13 +508,13 @@ A screenshot may be attached — use it silently only if relevant. Never mention
     // Default harness: piMono (Omi AI via the bundled pi-mono subprocess, authenticated
     // with the user's Firebase ID token). Claude Code remains as an opt-in harness that
     // uses the user's own Claude OAuth.
-    private lazy var aiBridge: AIBridge = {
+    private lazy var agentBridge: AgentBridge = {
         let mode = UserDefaults.standard.string(forKey: "chatBridgeMode") ?? BridgeMode.piMono.rawValue
         let harness = mode == BridgeMode.piMono.rawValue ? "piMono" : "acp"
         activeBridgeHarness = harness
-        return AIBridge(harnessMode: harness)
+        return AgentBridge(harnessMode: harness)
     }()
-    private var aiBridgeStarted = false
+    private var agentBridgeStarted = false
     /// Tracks the harness mode the bridge is actually running (NOT the @AppStorage preference).
     /// @AppStorage("chatBridgeMode") can be updated by other views sharing the same key,
     /// so comparing against it in switchBridgeMode() would always match → no-op.
@@ -527,9 +527,9 @@ A screenshot may be attached — use it silently only if relevant. Never mention
     }
     @AppStorage("chatBridgeMode") var bridgeMode: String = BridgeMode.piMono.rawValue
 
-    /// Whether the AI bridge requires authentication (shown as sheet in UI)
+    /// Whether the agent bridge requires authentication (shown as sheet in UI)
     @Published var isClaudeAuthRequired = false
-    /// Auth methods returned by AI bridge
+    /// Auth methods returned by agent bridge
     @Published var claudeAuthMethods: [[String: Any]] = []
     /// OAuth URL to open in browser (sent by bridge when auth is needed)
     @Published var claudeAuthUrl: String?
@@ -683,15 +683,15 @@ A screenshot may be attached — use it silently only if relevant. Never mention
                         log("ChatProvider: Skipping bridge restart — query in progress")
                         return
                     }
-                    guard self.aiBridgeStarted else { return }
-                    log("ChatProvider: Playwright extension setting changed, restarting AI bridge")
-                    self.aiBridgeStarted = false
+                    guard self.agentBridgeStarted else { return }
+                    log("ChatProvider: Playwright extension setting changed, restarting agent bridge")
+                    self.agentBridgeStarted = false
                     do {
-                        try await self.aiBridge.restart()
-                        self.aiBridgeStarted = true
-                        log("ChatProvider: AI bridge restarted with new Playwright settings")
+                        try await self.agentBridge.restart()
+                        self.agentBridgeStarted = true
+                        log("ChatProvider: agent bridge restarted with new Playwright settings")
                     } catch {
-                        logError("Failed to restart AI bridge after Playwright setting change", error: error)
+                        logError("Failed to restart agent bridge after Playwright setting change", error: error)
                     }
                 }
             }
@@ -704,14 +704,14 @@ A screenshot may be attached — use it silently only if relevant. Never mention
                 self.groupedSessions = self.computeGroupedSessions()
             }
 
-        // Kill AI bridge subprocess on app quit to prevent orphaned Node.js processes
+        // Kill agent bridge subprocess on app quit to prevent orphaned Node.js processes
         terminationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in
-                await self.aiBridge.stop()
+                await self.agentBridge.stop()
             }
         }
     }
@@ -726,8 +726,8 @@ A screenshot may be attached — use it silently only if relevant. Never mention
 
     /// Drop a cached ACP session so the next query recreates it with fresh prompt context.
     func invalidateAgentSession(sessionKey: String) async {
-        guard aiBridgeStarted else { return }
-        await aiBridge.invalidateSession(sessionKey: sessionKey)
+        guard agentBridgeStarted else { return }
+        await agentBridge.invalidateSession(sessionKey: sessionKey)
     }
 
     /// Test that the Playwright Chrome extension is connected and working.
@@ -735,15 +735,15 @@ A screenshot may be attached — use it silently only if relevant. Never mention
     /// then sends a lightweight test query that triggers a browser_snapshot tool call.
     func testPlaywrightConnection() async throws -> Bool {
         // Restart bridge to pick up new extension token
-        aiBridgeStarted = false
+        agentBridgeStarted = false
         do {
-            try await aiBridge.restart()
-            aiBridgeStarted = true
+            try await agentBridge.restart()
+            agentBridgeStarted = true
         } catch {
-            try await aiBridge.start()
-            aiBridgeStarted = true
+            try await agentBridge.start()
+            agentBridgeStarted = true
         }
-        return try await aiBridge.testPlaywrightConnection()
+        return try await agentBridge.testPlaywrightConnection()
     }
 
     /// Whether we're currently in user's Claude account mode
@@ -751,25 +751,25 @@ A screenshot may be attached — use it silently only if relevant. Never mention
         bridgeMode == BridgeMode.userClaude.rawValue
     }
 
-    /// Ensure the AI bridge is started (restarts if the process died)
+    /// Ensure the agent bridge is started (restarts if the process died)
     private func ensureBridgeStarted() async -> Bool {
-        if aiBridgeStarted {
-            let alive = await aiBridge.isAlive
+        if agentBridgeStarted {
+            let alive = await agentBridge.isAlive
             if !alive {
-                log("ChatProvider: AI bridge process died, will restart")
-                aiBridgeStarted = false
+                log("ChatProvider: agent bridge process died, will restart")
+                agentBridgeStarted = false
             }
         }
-        guard !aiBridgeStarted else { return true }
+        guard !agentBridgeStarted else { return true }
         // Wait for API keys (Firebase, Calendar) before starting the bridge.
         await APIKeyService.shared.waitForKeys()
         do {
             await preparePromptContextIfNeeded()
-            try await aiBridge.start()
-            aiBridgeStarted = true
-            log("ChatProvider: AI bridge started successfully")
+            try await agentBridge.start()
+            agentBridgeStarted = true
+            log("ChatProvider: agent bridge started successfully")
             // Set up global auth handlers so auth_required during warmup is handled
-            await aiBridge.setGlobalAuthHandlers(
+            await agentBridge.setGlobalAuthHandlers(
                 onAuthRequired: { [weak self] methods, authUrl in
                     Task { @MainActor [weak self] in
                         self?.claudeAuthMethods = methods
@@ -792,13 +792,13 @@ A screenshot may be attached — use it silently only if relevant. Never mention
                 ? ModelQoS.Claude.defaultSelection
                 : ShortcutSettings.shared.selectedModel
             cachedMainSystemPrompt = mainSystemPrompt
-            await aiBridge.warmupSession(cwd: workingDirectory, sessions: [
+            await agentBridge.warmupSession(cwd: workingDirectory, sessions: [
                 .init(key: "main", model: ModelQoS.Claude.chat, systemPrompt: mainSystemPrompt),
                 .init(key: "floating", model: floatingModel, systemPrompt: floatingSystemPrompt)
             ])
             return true
         } catch {
-            logError("Failed to start AI bridge", error: error)
+            logError("Failed to start agent bridge", error: error)
             let rawError = String(describing: error)
             AnalyticsManager.shared.chatAgentError(error: "AI not available: bridge failed to start", rawError: rawError)
             errorMessage = "AI not available: \(error.localizedDescription)"
@@ -827,13 +827,13 @@ A screenshot may be attached — use it silently only if relevant. Never mention
         log("ChatProvider: Switching bridge mode from \(previousHarness) to \(resolvedMode.rawValue)")
 
         // Stop the current bridge
-        await aiBridge.stop()
-        aiBridgeStarted = false
+        await agentBridge.stop()
+        agentBridgeStarted = false
 
         // Switch mode and recreate bridge
         bridgeMode = resolvedMode.rawValue
         activeBridgeHarness = newHarness
-        aiBridge = AIBridge(harnessMode: newHarness)
+        agentBridge = AgentBridge(harnessMode: newHarness)
         AnalyticsManager.shared.chatBridgeModeChanged(from: previousHarness, to: resolvedMode.rawValue)
 
         // Check Claude connection status when switching to user's Claude account
@@ -892,9 +892,9 @@ A screenshot may be attached — use it silently only if relevant. Never mention
     func disconnectClaude() async {
         log("ChatProvider: Disconnecting Claude account")
 
-        // 1. Stop the AI bridge
-        await aiBridge.stop()
-        aiBridgeStarted = false
+        // 1. Stop the agent bridge
+        await agentBridge.stop()
+        agentBridgeStarted = false
 
         // 2. Clear the OAuth token from config file
         let configPath = NSString(string: "~/Library/Application Support/Claude/config.json").expandingTildeInPath
@@ -931,7 +931,7 @@ A screenshot may be attached — use it silently only if relevant. Never mention
 
         // 5. Switch back to the default Omi harness (pi-mono) and recreate the bridge.
         bridgeMode = BridgeMode.piMono.rawValue
-        aiBridge = AIBridge(harnessMode: "piMono")
+        agentBridge = AgentBridge(harnessMode: "piMono")
     }
 
     // MARK: - Session Management
@@ -1626,7 +1626,7 @@ A screenshot may be attached — use it silently only if relevant. Never mention
         return prompt
     }
 
-    /// Run a single question through the AI bridge for Chat Lab evaluation.
+    /// Run a single question through the agent bridge for Chat Lab evaluation.
     /// Uses a unique session key so it doesn't interfere with the real chat.
     func labRunQuestion(question: String, systemPrompt: String, sessionKey: String) async -> String {
         // Ensure bridge is running
@@ -1635,7 +1635,7 @@ A screenshot may be attached — use it silently only if relevant. Never mention
         }
 
         do {
-            let result = try await aiBridge.query(
+            let result = try await agentBridge.query(
                 prompt: question,
                 systemPrompt: systemPrompt,
                 sessionKey: sessionKey,
@@ -2047,7 +2047,7 @@ A screenshot may be attached — use it silently only if relevant. Never mention
         guard isSending else { return }
         isStopping = true
         Task {
-            await aiBridge.interrupt()
+            await agentBridge.interrupt()
         }
         // Result flows back normally through the bridge with partial text
     }
@@ -2094,7 +2094,7 @@ A screenshot may be attached — use it silently only if relevant. Never mention
         // When sendMessage finishes (due to the interrupt), it checks
         // pendingFollowUpText and chains a new full query automatically.
         pendingFollowUpText = trimmedText
-        await aiBridge.interrupt()
+        await agentBridge.interrupt()
         log("ChatProvider: follow-up queued, interrupt sent")
     }
 
@@ -2270,7 +2270,7 @@ A screenshot may be attached — use it silently only if relevant. Never mention
         var sqlQueryCount = 0
 
         do {
-            // Use the system prompt built at warmup. The AI bridge applies it only
+            // Use the system prompt built at warmup. The agent bridge applies it only
             // at session/new; for the normal reused-session path it is ignored.
             // Passing it here ensures it is applied if the session was invalidated
             // (e.g. cwd change) and a new session/new is triggered mid-conversation.
@@ -2307,13 +2307,13 @@ A screenshot may be attached — use it silently only if relevant. Never mention
             }
 
             // Query the active bridge with streaming
-            // Callbacks for AI bridge
-            let textDeltaHandler: AIBridge.TextDeltaHandler = { [weak self] delta in
+            // Callbacks for agent bridge
+            let textDeltaHandler: AgentBridge.TextDeltaHandler = { [weak self] delta in
                 Task { @MainActor [weak self] in
                     self?.appendToMessage(id: aiMessageId, text: delta)
                 }
             }
-            let toolCallHandler: AIBridge.ToolCallHandler = { callId, name, input in
+            let toolCallHandler: AgentBridge.ToolCallHandler = { callId, name, input in
                 let toolCall = ToolCall(name: name, arguments: input, thoughtSignature: nil)
                 let result = await ChatToolExecutor.execute(toolCall)
                 log("OMI tool \(name) executed for callId=\(callId)")
@@ -2328,7 +2328,7 @@ A screenshot may be attached — use it silently only if relevant. Never mention
                 }
                 return result
             }
-            let toolActivityHandler: AIBridge.ToolActivityHandler = { [weak self] name, status, toolUseId, input in
+            let toolActivityHandler: AgentBridge.ToolActivityHandler = { [weak self] name, status, toolUseId, input in
                 Task { @MainActor [weak self] in
                     self?.addToolActivity(
                         messageId: aiMessageId,
@@ -2370,18 +2370,18 @@ A screenshot may be attached — use it silently only if relevant. Never mention
                     }
                 }
             }
-            let thinkingDeltaHandler: AIBridge.ThinkingDeltaHandler = { [weak self] text in
+            let thinkingDeltaHandler: AgentBridge.ThinkingDeltaHandler = { [weak self] text in
                 Task { @MainActor [weak self] in
                     self?.appendThinking(messageId: aiMessageId, text: text)
                 }
             }
-            let toolResultDisplayHandler: AIBridge.ToolResultDisplayHandler = { [weak self] toolUseId, name, output in
+            let toolResultDisplayHandler: AgentBridge.ToolResultDisplayHandler = { [weak self] toolUseId, name, output in
                 Task { @MainActor [weak self] in
                     self?.addToolResult(messageId: aiMessageId, toolUseId: toolUseId, name: name, output: output)
                 }
             }
 
-            let queryResult = try await aiBridge.query(
+            let queryResult = try await agentBridge.query(
                 prompt: trimmedText,
                 systemPrompt: systemPrompt,
                 sessionKey: isOnboarding ? "onboarding" : (sessionKey ?? "main"),
@@ -2560,7 +2560,7 @@ A screenshot may be attached — use it silently only if relevant. Never mention
             // On timeout, cancel the stuck ACP session so it's not left dangling
             if let bridgeError = error as? BridgeError, case .timeout = bridgeError {
                 log("ChatProvider: ACP query timed out, sending interrupt to cancel stuck session")
-                await aiBridge.interrupt()
+                await agentBridge.interrupt()
             }
 
             // Flush any remaining buffered streaming text before handling the error

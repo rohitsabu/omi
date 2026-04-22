@@ -1,10 +1,10 @@
 import Foundation
 
-/// Manages a long-lived Node.js subprocess running the AI bridge.
+/// Manages a long-lived Node.js subprocess running the agent runtime.
 /// Supports multiple harness modes: pi-mono (default, routed through api.omi.me)
 /// and Claude Account (user's own OAuth credentials via ACP).
 /// Communication uses JSON lines over stdin/stdout pipes.
-actor AIBridge {
+actor AgentBridge {
 
   // MARK: - Types
 
@@ -105,7 +105,7 @@ actor AIBridge {
 
   // MARK: - Lifecycle
 
-  /// Start the Node.js AI bridge process
+  /// Start the Node.js agent bridge process
   func start() async throws {
     guard !isRunning else { return }
 
@@ -135,7 +135,7 @@ actor AIBridge {
       .appendingPathComponent("package.json")
     let pkgJsonExists = FileManager.default.fileExists(atPath: pkgJsonPath)
     log(
-      "AIBridge: starting with node=\(nodePath) (exists=\(nodeExists)), bridge=\(bridgePath) (exists=\(bridgeExists)), package.json=\(pkgJsonExists)"
+      "AgentBridge: starting with node=\(nodePath) (exists=\(nodeExists)), bridge=\(bridgePath) (exists=\(bridgeExists)), package.json=\(pkgJsonExists)"
     )
 
     let proc = Process()
@@ -164,11 +164,11 @@ actor AIBridge {
       do {
         token = try await authService.getIdToken()
       } catch {
-        log("AIBridge: pi-mono start refused — auth error: \(error.localizedDescription)")
+        log("AgentBridge: pi-mono start refused — auth error: \(error.localizedDescription)")
         throw BridgeError.authMissing
       }
       guard !token.isEmpty else {
-        log("AIBridge: pi-mono start refused — Firebase ID token is empty")
+        log("AgentBridge: pi-mono start refused — Firebase ID token is empty")
         throw BridgeError.authMissing
       }
       env["OMI_AUTH_TOKEN"] = token
@@ -180,7 +180,7 @@ actor AIBridge {
       if !rustBase.isEmpty {
         env["OMI_API_BASE_URL"] = rustBase.hasSuffix("/") ? "\(rustBase)v2" : "\(rustBase)/v2"
       } else {
-        log("AIBridge: pi-mono start refused — OMI_API_URL (Rust backend) not configured")
+        log("AgentBridge: pi-mono start refused — OMI_API_URL (Rust backend) not configured")
         throw BridgeError.bridgeScriptNotFound
       }
     }
@@ -223,7 +223,7 @@ actor AIBridge {
     stderr.fileHandleForReading.readabilityHandler = { [weak self] handle in
       let data = handle.availableData
       if !data.isEmpty, let text = String(data: data, encoding: .utf8) {
-        log("AIBridge stderr: \(text.trimmingCharacters(in: .whitespacesAndNewlines))")
+        log("AgentBridge stderr: \(text.trimmingCharacters(in: .whitespacesAndNewlines))")
         if text.contains("FatalProcessOutOfMemory")
           || text.contains("JavaScript heap out of memory")
           || text.contains("Failed to reserve virtual memory")
@@ -267,7 +267,7 @@ actor AIBridge {
     // Wait for the initial "init" message indicating bridge is ready
     let initMsg = try await waitForMessage(timeout: 30.0)
     if case .`init`(let sessionId) = initMsg {
-      log("AIBridge: bridge ready (sessionId=\(sessionId))")
+      log("AgentBridge: bridge ready (sessionId=\(sessionId))")
     }
   }
 
@@ -279,7 +279,7 @@ actor AIBridge {
 
   /// Stop the bridge process
   func stop() {
-    log("AIBridge: stopping")
+    log("AgentBridge: stopping")
     tokenRefreshTask?.cancel()
     tokenRefreshTask = nil
     readTask?.cancel()
@@ -442,7 +442,7 @@ actor AIBridge {
     // Discard any stale messages from a previous interrupted/timed-out query
     // to avoid desynchronizing the request-response protocol.
     if !pendingMessages.isEmpty {
-      log("AIBridge: clearing \(pendingMessages.count) stale pending messages before new query")
+      log("AgentBridge: clearing \(pendingMessages.count) stale pending messages before new query")
       pendingMessages.removeAll()
     }
     sendLine(jsonString)
@@ -456,7 +456,7 @@ actor AIBridge {
 
       switch message {
       case .`init`:
-        log("AIBridge: new session started")
+        log("AgentBridge: new session started")
 
       case .textDelta(let text):
         onTextDelta(text)
@@ -464,7 +464,7 @@ actor AIBridge {
       case .toolUse(let callId, let name, let input):
         // If already interrupted, skip this tool call entirely
         if isInterrupted {
-          log("AIBridge: skipping tool call \(name) (interrupted)")
+          log("AgentBridge: skipping tool call \(name) (interrupted)")
           continue
         }
         let result = await onToolCall(callId, name, input)
@@ -481,7 +481,7 @@ actor AIBridge {
         // If interrupted during tool execution, skip remaining tool calls
         // and drain messages to find the result (already sent by the bridge).
         if isInterrupted {
-          log("AIBridge: interrupted during tool call, draining for result")
+          log("AgentBridge: interrupted during tool call, draining for result")
           while !pendingMessages.isEmpty {
             let pending = pendingMessages.removeFirst()
             switch pending {
@@ -493,7 +493,7 @@ actor AIBridge {
                 outputTokens: outputTokens, cacheReadTokens: cacheReadTokens,
                 cacheWriteTokens: cacheWriteTokens)
             case .error(let message):
-              log("AIBridge: agent error (raw): \(message)")
+              log("AgentBridge: agent error (raw): \(message)")
               throw BridgeError.agentError(message)
             default:
               continue
@@ -510,7 +510,7 @@ actor AIBridge {
                 outputTokens: outputTokens, cacheReadTokens: cacheReadTokens,
                 cacheWriteTokens: cacheWriteTokens)
             case .error(let message):
-              log("AIBridge: agent error (raw): \(message)")
+              log("AgentBridge: agent error (raw): \(message)")
               throw BridgeError.agentError(message)
             default:
               continue
@@ -536,7 +536,7 @@ actor AIBridge {
           cacheWriteTokens: cacheWriteTokens)
 
       case .error(let message):
-        log("AIBridge: agent error (raw): \(message)")
+        log("AgentBridge: agent error (raw): \(message)")
         throw BridgeError.agentError(message)
 
       case .authRequired(let methods, let authUrl):
@@ -566,11 +566,11 @@ actor AIBridge {
     do {
       token = try await authService.getIdToken(forceRefresh: true)
     } catch {
-      log("AIBridge: refreshAuthToken failed — \(error.localizedDescription)")
+      log("AgentBridge: refreshAuthToken failed — \(error.localizedDescription)")
       return
     }
     guard !token.isEmpty else {
-      log("AIBridge: refreshAuthToken got empty token; skipping push")
+      log("AgentBridge: refreshAuthToken got empty token; skipping push")
       return
     }
     let msg: [String: Any] = ["type": "refresh_token", "token": token]
@@ -589,7 +589,7 @@ actor AIBridge {
       do {
         try pipe.fileHandleForWriting.write(contentsOf: data)
       } catch {
-        log("AIBridge: Failed to write to stdin pipe: \(error.localizedDescription)")
+        log("AgentBridge: Failed to write to stdin pipe: \(error.localizedDescription)")
       }
     }
   }
@@ -631,7 +631,7 @@ actor AIBridge {
       let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
       let type = dict["type"] as? String
     else {
-      log("AIBridge: failed to parse message: \(json.prefix(200))")
+      log("AgentBridge: failed to parse message: \(json.prefix(200))")
       return nil
     }
 
@@ -693,7 +693,7 @@ actor AIBridge {
       return .authSuccess
 
     default:
-      log("AIBridge: unknown message type: \(type)")
+      log("AgentBridge: unknown message type: \(type)")
       return nil
     }
   }
@@ -756,7 +756,7 @@ actor AIBridge {
   ) {
     // Ignore stale termination from a previous process (fixes race where old handler closes new pipes)
     if let gen = generation, gen != processGeneration {
-      log("AIBridge: ignoring stale termination (gen=\(gen), current=\(processGeneration))")
+      log("AgentBridge: ignoring stale termination (gen=\(gen), current=\(processGeneration))")
       return
     }
 
@@ -767,7 +767,7 @@ actor AIBridge {
       stderrHandle.readabilityHandler = nil  // Stop async handler
       let remaining = stderrHandle.availableData
       if !remaining.isEmpty, let text = String(data: remaining, encoding: .utf8) {
-        log("AIBridge stderr (final): \(text.trimmingCharacters(in: .whitespacesAndNewlines))")
+        log("AgentBridge stderr (final): \(text.trimmingCharacters(in: .whitespacesAndNewlines))")
         if text.contains("out of memory") || text.contains("Failed to reserve virtual memory") {
           lastExitWasOOM = true
         }
@@ -782,7 +782,7 @@ actor AIBridge {
     let error: BridgeError = likelyOOM ? .outOfMemory : .processExited
     lastExitWasOOM = false
 
-    log("AIBridge: process terminated (code=\(exitCode), reason=\(reasonStr), error=\(error))")
+    log("AgentBridge: process terminated (code=\(exitCode), reason=\(reasonStr), error=\(error))")
     isRunning = false
     closePipes()
     messageContinuation?.resume(throwing: error)
@@ -875,7 +875,7 @@ actor AIBridge {
       throw BridgeError.notRunning
     }
 
-    log("AIBridge: Testing Playwright connection...")
+    log("AgentBridge: Testing Playwright connection...")
     let result = try await query(
       prompt:
         "Call browser_snapshot to verify the extension is connected. Only call that one tool, then report success or failure.",
@@ -885,15 +885,15 @@ actor AIBridge {
       onTextDelta: { _ in },
       onToolCall: { _, _, _ in "" },
       onToolActivity: { name, status, _, _ in
-        log("AIBridge: test tool activity: \(name) \(status)")
+        log("AgentBridge: test tool activity: \(name) \(status)")
       },
       onThinkingDelta: { _ in },
       onToolResultDisplay: { _, name, output in
-        log("AIBridge: test tool result: \(name) -> \(output.prefix(200))")
+        log("AgentBridge: test tool result: \(name) -> \(output.prefix(200))")
       }
     )
     let connected = result.text.contains("CONNECTED")
-    log("AIBridge: Playwright test response: \(result.text.prefix(300)), connected=\(connected)")
+    log("AgentBridge: Playwright test response: \(result.text.prefix(300)), connected=\(connected)")
     return connected
   }
 
@@ -968,7 +968,7 @@ enum BridgeError: LocalizedError {
         : "Node.js not found. Please reinstall the app."
     case .bridgeScriptNotFound:
       return AnalyticsManager.isDevBuild
-        ? "AI components missing. Run ./run.sh to install the AI bridge."
+        ? "AI components missing. Run ./run.sh to install the agent runtime."
         : "AI components missing. Please reinstall the app."
     case .notRunning:
       return "AI is not running. Try sending your message again."

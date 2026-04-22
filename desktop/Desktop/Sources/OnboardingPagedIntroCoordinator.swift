@@ -988,7 +988,7 @@ final class OnboardingPagedIntroCoordinator: ObservableObject {
       """
 
     do {
-      let bridge = AIBridge(harnessMode: "piMono")
+      let bridge = AgentBridge(harnessMode: "piMono")
       try await bridge.start()
       defer { Task { await bridge.stop() } }
 
