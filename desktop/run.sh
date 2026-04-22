@@ -395,10 +395,10 @@ if [ -n "$SWIFTPM_PID" ]; then
     done
 fi
 
-step "Building ai-bridge (npm install + tsc)..."
-AI_BRIDGE_DIR="$(dirname "$0")/ai-bridge"
-if [ -d "$AI_BRIDGE_DIR" ]; then
-    cd "$AI_BRIDGE_DIR"
+step "Building agent (npm install + tsc)..."
+AGENT_DIR="$(dirname "$0")/agent"
+if [ -d "$AGENT_DIR" ]; then
+    cd "$AGENT_DIR"
     if [ ! -d "node_modules" ] || [ "package.json" -nt "node_modules/.package-lock.json" ]; then
         substep "Installing npm dependencies"
         npm install --no-fund --no-audit 2>&1 | tail -1
@@ -407,7 +407,7 @@ if [ -d "$AI_BRIDGE_DIR" ]; then
     npm run build --silent
     cd - > /dev/null
 else
-    echo "Warning: ai-bridge directory not found at $AI_BRIDGE_DIR"
+    echo "Warning: agent directory not found at $AGENT_DIR"
 fi
 
 step "Checking schema docs..."
@@ -494,12 +494,12 @@ if [ -d "$RESOURCE_BUNDLE" ]; then
     cp -Rf "$RESOURCE_BUNDLE" "$APP_BUNDLE/Contents/Resources/"
 fi
 
-substep "Copying ai-bridge"
-if [ -d "$AI_BRIDGE_DIR/dist" ]; then
-    mkdir -p "$APP_BUNDLE/Contents/Resources/ai-bridge"
-    cp -Rf "$AI_BRIDGE_DIR/dist" "$APP_BUNDLE/Contents/Resources/ai-bridge/"
-    cp -f "$AI_BRIDGE_DIR/package.json" "$APP_BUNDLE/Contents/Resources/ai-bridge/"
-    cp -Rf "$AI_BRIDGE_DIR/node_modules" "$APP_BUNDLE/Contents/Resources/ai-bridge/"
+substep "Copying agent"
+if [ -d "$AGENT_DIR/dist" ]; then
+    mkdir -p "$APP_BUNDLE/Contents/Resources/agent"
+    cp -Rf "$AGENT_DIR/dist" "$APP_BUNDLE/Contents/Resources/agent/"
+    cp -f "$AGENT_DIR/package.json" "$APP_BUNDLE/Contents/Resources/agent/"
+    cp -Rf "$AGENT_DIR/node_modules" "$APP_BUNDLE/Contents/Resources/agent/"
 fi
 
 substep "Copying pi-mono-extension (for piMono harness)"

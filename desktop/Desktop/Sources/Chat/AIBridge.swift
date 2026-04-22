@@ -901,7 +901,7 @@ actor AIBridge {
     // 1. Check in app bundle Resources
     if let bundlePath = Bundle.main.resourcePath {
       let bundledScript = (bundlePath as NSString).appendingPathComponent(
-        "ai-bridge/dist/index.js")
+        "agent/dist/index.js")
       if FileManager.default.fileExists(atPath: bundledScript) {
         return bundledScript
       }
@@ -911,8 +911,8 @@ actor AIBridge {
     let executableURL = Bundle.main.executableURL
     if let execDir = executableURL?.deletingLastPathComponent() {
       let devPaths = [
-        execDir.appendingPathComponent("../../../ai-bridge/dist/index.js").path,
-        execDir.appendingPathComponent("../../../../ai-bridge/dist/index.js").path,
+        execDir.appendingPathComponent("../../../agent/dist/index.js").path,
+        execDir.appendingPathComponent("../../../../agent/dist/index.js").path,
       ]
       for path in devPaths {
         let resolved = (path as NSString).standardizingPath
@@ -925,9 +925,9 @@ actor AIBridge {
     // 3. Check relative to current working directory
     let cwdPath = FileManager.default.currentDirectoryPath
     let cwdCandidates = [
-      "ai-bridge/dist/index.js",
-      "desktop/ai-bridge/dist/index.js",
-      "../desktop/ai-bridge/dist/index.js",
+      "agent/dist/index.js",
+      "desktop/agent/dist/index.js",
+      "../desktop/agent/dist/index.js",
     ]
     for relativePath in cwdCandidates {
       let candidate = (cwdPath as NSString).appendingPathComponent(relativePath)

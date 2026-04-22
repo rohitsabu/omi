@@ -117,11 +117,11 @@ function mapModel(model: string): string {
  *  1. $PI_MONO_PATH (test/dev override)
  *  2. The actual pi-coding-agent dist/cli.js (bypasses .bin symlinks that
  *     get resolved by ditto during app bundle install)
- *  3. ai-bridge/node_modules/.bin/pi (fallback for dev where symlinks work)
+ *  3. agent/node_modules/.bin/pi (fallback for dev where symlinks work)
  *  4. Fall back to "pi" on PATH (dev machines only)
  */
 function resolveBundledPi(): string {
-  // this file compiles to ai-bridge/dist/adapters/pi-mono.js
+  // this file compiles to agent/dist/adapters/pi-mono.js
   // Prefer the direct package path — .bin/pi is a symlink that ditto resolves
   // into a flat copy, breaking its relative import of ./main.js
   const direct = new URL(
@@ -137,8 +137,8 @@ function resolveBundledPi(): string {
 
 /** Resolve the omi-provider extension file bundled alongside the app.
  *
- *  Dev: <repo>/desktop/ai-bridge/dist/adapters/../../.. → <repo>/desktop/pi-mono-extension/index.ts
- *  Shipped: <App>.app/Contents/Resources/ai-bridge/dist/adapters/../../.. → <App>.app/Contents/Resources/pi-mono-extension/index.ts
+ *  Dev: <repo>/desktop/agent/dist/adapters/../../.. → <repo>/desktop/pi-mono-extension/index.ts
+ *  Shipped: <App>.app/Contents/Resources/agent/dist/adapters/../../.. → <App>.app/Contents/Resources/pi-mono-extension/index.ts
  */
 function resolveBundledExtension(): string {
   return new URL(

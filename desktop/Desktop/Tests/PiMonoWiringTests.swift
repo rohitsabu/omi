@@ -215,7 +215,7 @@ final class PiMonoWiringTests: XCTestCase {
 
     XCTAssertEqual(
       violations, [],
-      "Found stale ACPBridge/acp-bridge references — renamed to AIBridge/ai-bridge in #6594:\n"
+      "Found stale ACPBridge/acp-bridge references — renamed to AIBridge/agent in #6594:\n"
         + violations.joined(separator: "\n"))
   }
 
