@@ -154,8 +154,8 @@ final class PiMonoWiringTests: XCTestCase {
     XCTAssertEqual(p.id, "piMono")
     XCTAssertEqual(p.displayName, "Omi AI")
     XCTAssertEqual(p.bridgeModeRawValue, "piMono")
-    XCTAssertEqual(p.attributionURL?.host, "omi.me")
-    XCTAssertEqual(p.sfSymbol, "pi")
+    XCTAssertNil(p.attributionURL)
+    XCTAssertEqual(p.sfSymbol, "")
     XCTAssertFalse(p.tagline.isEmpty)
   }
 
@@ -165,7 +165,7 @@ final class PiMonoWiringTests: XCTestCase {
     XCTAssertEqual(p.displayName, "Claude")
     XCTAssertEqual(p.bridgeModeRawValue, "claudeCode")
     XCTAssertEqual(p.attributionURL?.host, "claude.ai")
-    XCTAssertEqual(p.sfSymbol, "brain.head.profile")
+    XCTAssertEqual(p.sfSymbol, "")
     XCTAssertFalse(p.tagline.isEmpty)
   }
 
