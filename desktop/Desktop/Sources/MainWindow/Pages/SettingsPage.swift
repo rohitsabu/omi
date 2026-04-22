@@ -2323,8 +2323,9 @@ struct SettingsContentView: View {
             Spacer()
 
             Picker("", selection: $chatBridgeMode) {
-              Text("Omi AI").tag("piMono")
-              Text("Your Claude Account").tag("claudeCode")
+              ForEach(AIProvider.all) { provider in
+                Text(provider.displayName).tag(provider.bridgeModeRawValue)
+              }
             }
             .pickerStyle(.menu)
             .frame(width: 200)
@@ -2337,24 +2338,24 @@ struct SettingsContentView: View {
             }
           }
 
-          if chatBridgeMode == "piMono" {
+          if let provider = AIProvider.from(bridgeMode: chatBridgeMode) {
             HStack(spacing: 6) {
-              if let logoURL = Bundle.resourceBundle.url(forResource: "herologo", withExtension: "png"),
-                let logoImage = NSImage(contentsOf: logoURL)
-              {
-                Image(nsImage: logoImage)
-                  .resizable()
-                  .aspectRatio(contentMode: .fit)
-                  .frame(width: 16, height: 16)
-              }
-              Text("Powered by Omi AI — inference routed through api.omi.me")
+              Image(systemName: provider.sfSymbol)
                 .scaledFont(size: 12)
                 .foregroundColor(OmiColors.textTertiary)
+              if let url = provider.attributionURL {
+                Link(destination: url) {
+                  Text("\(provider.tagline) · \(url.host ?? "")")
+                    .scaledFont(size: 12)
+                    .foregroundColor(OmiColors.textTertiary)
+                    .underline()
+                }
+              } else {
+                Text(provider.tagline)
+                  .scaledFont(size: 12)
+                  .foregroundColor(OmiColors.textTertiary)
+              }
             }
-          } else {
-            Text("Using your Claude Pro/Max subscription. You'll be prompted to sign in with your Claude account.")
-              .scaledFont(size: 12)
-              .foregroundColor(OmiColors.textTertiary)
           }
 
           if chatBridgeMode == "claudeCode" && chatProvider?.isClaudeConnected == true {
@@ -3158,8 +3159,9 @@ struct SettingsContentView: View {
             Spacer()
 
             Picker("", selection: $chatBridgeMode) {
-              Text("Omi AI").tag("piMono")
-              Text("Your Claude Account").tag("claudeCode")
+              ForEach(AIProvider.all) { provider in
+                Text(provider.displayName).tag(provider.bridgeModeRawValue)
+              }
             }
             .pickerStyle(.menu)
             .frame(width: 200)
@@ -3172,24 +3174,24 @@ struct SettingsContentView: View {
             }
           }
 
-          if chatBridgeMode == "piMono" {
+          if let provider = AIProvider.from(bridgeMode: chatBridgeMode) {
             HStack(spacing: 6) {
-              if let logoURL = Bundle.resourceBundle.url(forResource: "herologo", withExtension: "png"),
-                let logoImage = NSImage(contentsOf: logoURL)
-              {
-                Image(nsImage: logoImage)
-                  .resizable()
-                  .aspectRatio(contentMode: .fit)
-                  .frame(width: 16, height: 16)
-              }
-              Text("Powered by Omi AI")
+              Image(systemName: provider.sfSymbol)
                 .scaledFont(size: 12)
                 .foregroundColor(OmiColors.textTertiary)
+              if let url = provider.attributionURL {
+                Link(destination: url) {
+                  Text("\(provider.tagline) · \(url.host ?? "")")
+                    .scaledFont(size: 12)
+                    .foregroundColor(OmiColors.textTertiary)
+                    .underline()
+                }
+              } else {
+                Text(provider.tagline)
+                  .scaledFont(size: 12)
+                  .foregroundColor(OmiColors.textTertiary)
+              }
             }
-          } else {
-            Text("Use your Claude subscription for desktop chat.")
-              .scaledFont(size: 12)
-              .foregroundColor(OmiColors.textTertiary)
           }
 
           if chatBridgeMode == "claudeCode" && chatProvider?.isClaudeConnected == true {
