@@ -134,7 +134,7 @@ actor AppleNotesReaderService {
       """
 
     do {
-      let bridge = ACPBridge(harnessMode: "piMono")
+      let bridge = AIBridge(harnessMode: "piMono")
       try await bridge.start()
       defer { Task { await bridge.stop() } }
 

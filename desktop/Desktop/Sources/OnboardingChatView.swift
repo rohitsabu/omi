@@ -115,7 +115,7 @@ struct OnboardingChatView: View {
   @FocusState private var isInputFocused: Bool
 
   // Parallel exploration state
-  @State private var explorationBridge: ACPBridge?
+  @State private var explorationBridge: AIBridge?
   @State private var explorationRunning = false
   @State private var explorationCompleted = false
   @State private var explorationText = ""
@@ -1369,7 +1369,7 @@ struct OnboardingChatView: View {
 
     explorationTask = Task {
       do {
-        let bridge = ACPBridge(harnessMode: "piMono")
+        let bridge = AIBridge(harnessMode: "piMono")
         await MainActor.run { explorationBridge = bridge }
         try await bridge.start()
 

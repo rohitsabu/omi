@@ -1,10 +1,10 @@
 import Foundation
 
-/// Manages a long-lived Node.js subprocess running the ACP (Agent Client Protocol) bridge.
-/// Used when the user selects "Claude Account" mode (their own OAuth credentials).
-/// The default "Omi AI" mode uses the pi-mono harness instead (no ACP subprocess).
+/// Manages a long-lived Node.js subprocess running the AI bridge.
+/// Supports multiple harness modes: pi-mono (default, routed through api.omi.me)
+/// and Claude Account (user's own OAuth credentials via ACP).
 /// Communication uses JSON lines over stdin/stdout pipes.
-actor ACPBridge {
+actor AIBridge {
 
   // MARK: - Types
 
@@ -135,7 +135,7 @@ actor ACPBridge {
       .appendingPathComponent("package.json")
     let pkgJsonExists = FileManager.default.fileExists(atPath: pkgJsonPath)
     log(
-      "ACPBridge: starting with node=\(nodePath) (exists=\(nodeExists)), bridge=\(bridgePath) (exists=\(bridgeExists)), package.json=\(pkgJsonExists)"
+      "AIBridge: starting with node=\(nodePath) (exists=\(nodeExists)), bridge=\(bridgePath) (exists=\(bridgeExists)), package.json=\(pkgJsonExists)"
     )
 
     let proc = Process()
@@ -164,11 +164,11 @@ actor ACPBridge {
       do {
         token = try await authService.getIdToken()
       } catch {
-        log("ACPBridge: pi-mono start refused — auth error: \(error.localizedDescription)")
+        log("AIBridge: pi-mono start refused — auth error: \(error.localizedDescription)")
         throw BridgeError.authMissing
       }
       guard !token.isEmpty else {
-        log("ACPBridge: pi-mono start refused — Firebase ID token is empty")
+        log("AIBridge: pi-mono start refused — Firebase ID token is empty")
         throw BridgeError.authMissing
       }
       env["OMI_AUTH_TOKEN"] = token
@@ -180,7 +180,7 @@ actor ACPBridge {
       if !rustBase.isEmpty {
         env["OMI_API_BASE_URL"] = rustBase.hasSuffix("/") ? "\(rustBase)v2" : "\(rustBase)/v2"
       } else {
-        log("ACPBridge: pi-mono start refused — OMI_API_URL (Rust backend) not configured")
+        log("AIBridge: pi-mono start refused — OMI_API_URL (Rust backend) not configured")
         throw BridgeError.bridgeScriptNotFound
       }
     }
@@ -223,7 +223,7 @@ actor ACPBridge {
     stderr.fileHandleForReading.readabilityHandler = { [weak self] handle in
       let data = handle.availableData
       if !data.isEmpty, let text = String(data: data, encoding: .utf8) {
-        log("ACPBridge stderr: \(text.trimmingCharacters(in: .whitespacesAndNewlines))")
+        log("AIBridge stderr: \(text.trimmingCharacters(in: .whitespacesAndNewlines))")
         if text.contains("FatalProcessOutOfMemory")
           || text.contains("JavaScript heap out of memory")
           || text.contains("Failed to reserve virtual memory")
@@ -267,7 +267,7 @@ actor ACPBridge {
     // Wait for the initial "init" message indicating bridge is ready
     let initMsg = try await waitForMessage(timeout: 30.0)
     if case .`init`(let sessionId) = initMsg {
-      log("ACPBridge: bridge ready (sessionId=\(sessionId))")
+      log("AIBridge: bridge ready (sessionId=\(sessionId))")
     }
   }
 
@@ -279,7 +279,7 @@ actor ACPBridge {
 
   /// Stop the bridge process
   func stop() {
-    log("ACPBridge: stopping")
+    log("AIBridge: stopping")
     tokenRefreshTask?.cancel()
     tokenRefreshTask = nil
     readTask?.cancel()
@@ -442,7 +442,7 @@ actor ACPBridge {
     // Discard any stale messages from a previous interrupted/timed-out query
     // to avoid desynchronizing the request-response protocol.
     if !pendingMessages.isEmpty {
-      log("ACPBridge: clearing \(pendingMessages.count) stale pending messages before new query")
+      log("AIBridge: clearing \(pendingMessages.count) stale pending messages before new query")
       pendingMessages.removeAll()
     }
     sendLine(jsonString)
@@ -456,7 +456,7 @@ actor ACPBridge {
 
       switch message {
       case .`init`:
-        log("ACPBridge: new session started")
+        log("AIBridge: new session started")
 
       case .textDelta(let text):
         onTextDelta(text)
@@ -464,7 +464,7 @@ actor ACPBridge {
       case .toolUse(let callId, let name, let input):
         // If already interrupted, skip this tool call entirely
         if isInterrupted {
-          log("ACPBridge: skipping tool call \(name) (interrupted)")
+          log("AIBridge: skipping tool call \(name) (interrupted)")
           continue
         }
         let result = await onToolCall(callId, name, input)
@@ -481,7 +481,7 @@ actor ACPBridge {
         // If interrupted during tool execution, skip remaining tool calls
         // and drain messages to find the result (already sent by the bridge).
         if isInterrupted {
-          log("ACPBridge: interrupted during tool call, draining for result")
+          log("AIBridge: interrupted during tool call, draining for result")
           while !pendingMessages.isEmpty {
             let pending = pendingMessages.removeFirst()
             switch pending {
@@ -493,7 +493,7 @@ actor ACPBridge {
                 outputTokens: outputTokens, cacheReadTokens: cacheReadTokens,
                 cacheWriteTokens: cacheWriteTokens)
             case .error(let message):
-              log("ACPBridge: agent error (raw): \(message)")
+              log("AIBridge: agent error (raw): \(message)")
               throw BridgeError.agentError(message)
             default:
               continue
@@ -510,7 +510,7 @@ actor ACPBridge {
                 outputTokens: outputTokens, cacheReadTokens: cacheReadTokens,
                 cacheWriteTokens: cacheWriteTokens)
             case .error(let message):
-              log("ACPBridge: agent error (raw): \(message)")
+              log("AIBridge: agent error (raw): \(message)")
               throw BridgeError.agentError(message)
             default:
               continue
@@ -536,7 +536,7 @@ actor ACPBridge {
           cacheWriteTokens: cacheWriteTokens)
 
       case .error(let message):
-        log("ACPBridge: agent error (raw): \(message)")
+        log("AIBridge: agent error (raw): \(message)")
         throw BridgeError.agentError(message)
 
       case .authRequired(let methods, let authUrl):
@@ -566,11 +566,11 @@ actor ACPBridge {
     do {
       token = try await authService.getIdToken(forceRefresh: true)
     } catch {
-      log("ACPBridge: refreshAuthToken failed — \(error.localizedDescription)")
+      log("AIBridge: refreshAuthToken failed — \(error.localizedDescription)")
       return
     }
     guard !token.isEmpty else {
-      log("ACPBridge: refreshAuthToken got empty token; skipping push")
+      log("AIBridge: refreshAuthToken got empty token; skipping push")
       return
     }
     let msg: [String: Any] = ["type": "refresh_token", "token": token]
@@ -589,7 +589,7 @@ actor ACPBridge {
       do {
         try pipe.fileHandleForWriting.write(contentsOf: data)
       } catch {
-        log("ACPBridge: Failed to write to stdin pipe: \(error.localizedDescription)")
+        log("AIBridge: Failed to write to stdin pipe: \(error.localizedDescription)")
       }
     }
   }
@@ -631,7 +631,7 @@ actor ACPBridge {
       let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
       let type = dict["type"] as? String
     else {
-      log("ACPBridge: failed to parse message: \(json.prefix(200))")
+      log("AIBridge: failed to parse message: \(json.prefix(200))")
       return nil
     }
 
@@ -693,7 +693,7 @@ actor ACPBridge {
       return .authSuccess
 
     default:
-      log("ACPBridge: unknown message type: \(type)")
+      log("AIBridge: unknown message type: \(type)")
       return nil
     }
   }
@@ -756,7 +756,7 @@ actor ACPBridge {
   ) {
     // Ignore stale termination from a previous process (fixes race where old handler closes new pipes)
     if let gen = generation, gen != processGeneration {
-      log("ACPBridge: ignoring stale termination (gen=\(gen), current=\(processGeneration))")
+      log("AIBridge: ignoring stale termination (gen=\(gen), current=\(processGeneration))")
       return
     }
 
@@ -767,7 +767,7 @@ actor ACPBridge {
       stderrHandle.readabilityHandler = nil  // Stop async handler
       let remaining = stderrHandle.availableData
       if !remaining.isEmpty, let text = String(data: remaining, encoding: .utf8) {
-        log("ACPBridge stderr (final): \(text.trimmingCharacters(in: .whitespacesAndNewlines))")
+        log("AIBridge stderr (final): \(text.trimmingCharacters(in: .whitespacesAndNewlines))")
         if text.contains("out of memory") || text.contains("Failed to reserve virtual memory") {
           lastExitWasOOM = true
         }
@@ -782,7 +782,7 @@ actor ACPBridge {
     let error: BridgeError = likelyOOM ? .outOfMemory : .processExited
     lastExitWasOOM = false
 
-    log("ACPBridge: process terminated (code=\(exitCode), reason=\(reasonStr), error=\(error))")
+    log("AIBridge: process terminated (code=\(exitCode), reason=\(reasonStr), error=\(error))")
     isRunning = false
     closePipes()
     messageContinuation?.resume(throwing: error)
@@ -875,7 +875,7 @@ actor ACPBridge {
       throw BridgeError.notRunning
     }
 
-    log("ACPBridge: Testing Playwright connection...")
+    log("AIBridge: Testing Playwright connection...")
     let result = try await query(
       prompt:
         "Call browser_snapshot to verify the extension is connected. Only call that one tool, then report success or failure.",
@@ -885,15 +885,15 @@ actor ACPBridge {
       onTextDelta: { _ in },
       onToolCall: { _, _, _ in "" },
       onToolActivity: { name, status, _, _ in
-        log("ACPBridge: test tool activity: \(name) \(status)")
+        log("AIBridge: test tool activity: \(name) \(status)")
       },
       onThinkingDelta: { _ in },
       onToolResultDisplay: { _, name, output in
-        log("ACPBridge: test tool result: \(name) -> \(output.prefix(200))")
+        log("AIBridge: test tool result: \(name) -> \(output.prefix(200))")
       }
     )
     let connected = result.text.contains("CONNECTED")
-    log("ACPBridge: Playwright test response: \(result.text.prefix(300)), connected=\(connected)")
+    log("AIBridge: Playwright test response: \(result.text.prefix(300)), connected=\(connected)")
     return connected
   }
 
@@ -901,7 +901,7 @@ actor ACPBridge {
     // 1. Check in app bundle Resources
     if let bundlePath = Bundle.main.resourcePath {
       let bundledScript = (bundlePath as NSString).appendingPathComponent(
-        "acp-bridge/dist/index.js")
+        "ai-bridge/dist/index.js")
       if FileManager.default.fileExists(atPath: bundledScript) {
         return bundledScript
       }
@@ -911,8 +911,8 @@ actor ACPBridge {
     let executableURL = Bundle.main.executableURL
     if let execDir = executableURL?.deletingLastPathComponent() {
       let devPaths = [
-        execDir.appendingPathComponent("../../../acp-bridge/dist/index.js").path,
-        execDir.appendingPathComponent("../../../../acp-bridge/dist/index.js").path,
+        execDir.appendingPathComponent("../../../ai-bridge/dist/index.js").path,
+        execDir.appendingPathComponent("../../../../ai-bridge/dist/index.js").path,
       ]
       for path in devPaths {
         let resolved = (path as NSString).standardizingPath
@@ -925,9 +925,9 @@ actor ACPBridge {
     // 3. Check relative to current working directory
     let cwdPath = FileManager.default.currentDirectoryPath
     let cwdCandidates = [
-      "acp-bridge/dist/index.js",
-      "desktop/acp-bridge/dist/index.js",
-      "../desktop/acp-bridge/dist/index.js",
+      "ai-bridge/dist/index.js",
+      "desktop/ai-bridge/dist/index.js",
+      "../desktop/ai-bridge/dist/index.js",
     ]
     for relativePath in cwdCandidates {
       let candidate = (cwdPath as NSString).appendingPathComponent(relativePath)

@@ -72,7 +72,7 @@ function send(msg: OutboundMessage): void {
 }
 
 function logErr(msg: string): void {
-  process.stderr.write(`[acp-bridge] ${msg}\n`);
+  process.stderr.write(`[ai-bridge] ${msg}\n`);
 }
 
 // --- OMI tools relay via Unix socket ---
@@ -1066,11 +1066,11 @@ function handleSessionUpdate(
 
 // --- Error handling ---
 
-/** Write to /tmp/acp-bridge-crash.log as fallback when stderr might be lost */
+/** Write to /tmp/ai-bridge-crash.log as fallback when stderr might be lost */
 function logCrash(msg: string): void {
   try {
     const ts = new Date().toISOString();
-    appendFileSync("/tmp/acp-bridge-crash.log", `[${ts}] ${msg}\n`);
+    appendFileSync("/tmp/ai-bridge-crash.log", `[${ts}] ${msg}\n`);
   } catch {
     // ignore
   }
