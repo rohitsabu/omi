@@ -2339,21 +2339,16 @@ struct SettingsContentView: View {
           }
 
           if let provider = AIProvider.from(bridgeMode: chatBridgeMode) {
-            HStack(spacing: 6) {
-              Image(systemName: provider.sfSymbol)
-                .scaledFont(size: 12)
-                .foregroundColor(OmiColors.textTertiary)
-              if let url = provider.attributionURL {
-                Link(destination: url) {
-                  Text("\(provider.tagline) · \(url.host ?? "")")
-                    .scaledFont(size: 12)
-                    .foregroundColor(OmiColors.textTertiary)
-                }
-              } else {
-                Text(provider.tagline)
+            if let url = provider.attributionURL {
+              Link(destination: url) {
+                Text("\(provider.tagline) · \(url.host ?? "")")
                   .scaledFont(size: 12)
                   .foregroundColor(OmiColors.textTertiary)
               }
+            } else {
+              Text(provider.tagline)
+                .scaledFont(size: 12)
+                .foregroundColor(OmiColors.textTertiary)
             }
           }
 
@@ -3174,21 +3169,16 @@ struct SettingsContentView: View {
           }
 
           if let provider = AIProvider.from(bridgeMode: chatBridgeMode) {
-            HStack(spacing: 6) {
-              Image(systemName: provider.sfSymbol)
-                .scaledFont(size: 12)
-                .foregroundColor(OmiColors.textTertiary)
-              if let url = provider.attributionURL {
-                Link(destination: url) {
-                  Text("\(provider.tagline) · \(url.host ?? "")")
-                    .scaledFont(size: 12)
-                    .foregroundColor(OmiColors.textTertiary)
-                }
-              } else {
-                Text(provider.tagline)
+            if let url = provider.attributionURL {
+              Link(destination: url) {
+                Text("\(provider.tagline) · \(url.host ?? "")")
                   .scaledFont(size: 12)
                   .foregroundColor(OmiColors.textTertiary)
               }
+            } else {
+              Text(provider.tagline)
+                .scaledFont(size: 12)
+                .foregroundColor(OmiColors.textTertiary)
             }
           }
 
