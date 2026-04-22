@@ -2339,23 +2339,20 @@ struct SettingsContentView: View {
           }
 
           if let provider = AIProvider.from(bridgeMode: chatBridgeMode) {
-            HStack(spacing: 4) {
+            HStack(spacing: 6) {
               Image(systemName: provider.sfSymbol)
-                .scaledFont(size: 10)
+                .scaledFont(size: 12)
                 .foregroundColor(OmiColors.textTertiary)
-                .opacity(0.5)
               if let url = provider.attributionURL {
                 Link(destination: url) {
                   Text("\(provider.tagline) · \(url.host ?? "")")
-                    .scaledFont(size: 11)
+                    .scaledFont(size: 12)
                     .foregroundColor(OmiColors.textTertiary)
-                    .opacity(0.5)
                 }
               } else {
                 Text(provider.tagline)
-                  .scaledFont(size: 11)
+                  .scaledFont(size: 12)
                   .foregroundColor(OmiColors.textTertiary)
-                  .opacity(0.5)
               }
             }
           }
@@ -3177,23 +3174,20 @@ struct SettingsContentView: View {
           }
 
           if let provider = AIProvider.from(bridgeMode: chatBridgeMode) {
-            HStack(spacing: 4) {
+            HStack(spacing: 6) {
               Image(systemName: provider.sfSymbol)
-                .scaledFont(size: 10)
+                .scaledFont(size: 12)
                 .foregroundColor(OmiColors.textTertiary)
-                .opacity(0.5)
               if let url = provider.attributionURL {
                 Link(destination: url) {
                   Text("\(provider.tagline) · \(url.host ?? "")")
-                    .scaledFont(size: 11)
+                    .scaledFont(size: 12)
                     .foregroundColor(OmiColors.textTertiary)
-                    .opacity(0.5)
                 }
               } else {
                 Text(provider.tagline)
-                  .scaledFont(size: 11)
+                  .scaledFont(size: 12)
                   .foregroundColor(OmiColors.textTertiary)
-                  .opacity(0.5)
               }
             }
           }
