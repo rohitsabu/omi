@@ -23,10 +23,10 @@ struct AIProvider: Identifiable {
 
   static let piMono = AIProvider(
     id: "piMono",
-    displayName: "pi-mono",
-    tagline: "Open-source AI agent",
+    displayName: "Omi AI",
+    tagline: "Powered by pi-mono",
     attributionURL: URL(string: "https://pi.dev"),
-    sfSymbol: "function",
+    sfSymbol: "sparkles",
     logoResource: nil,
     bridgeModeRawValue: "piMono"
   )
