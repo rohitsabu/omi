@@ -146,4 +146,100 @@ final class PiMonoWiringTests: XCTestCase {
       "Found anthropicApiKey in client code — removed in #6594:\n"
         + violations.joined(separator: "\n"))
   }
+
+  // MARK: - AIProvider struct tests
+
+  func testAIProviderPiMonoHasCorrectValues() {
+    let p = AIProvider.piMono
+    XCTAssertEqual(p.id, "piMono")
+    XCTAssertEqual(p.displayName, "pi-mono")
+    XCTAssertEqual(p.bridgeModeRawValue, "piMono")
+    XCTAssertEqual(p.attributionURL?.host, "pi.dev")
+    XCTAssertEqual(p.sfSymbol, "function")
+    XCTAssertFalse(p.tagline.isEmpty)
+  }
+
+  func testAIProviderClaudeHasCorrectValues() {
+    let p = AIProvider.claude
+    XCTAssertEqual(p.id, "claude")
+    XCTAssertEqual(p.displayName, "Claude")
+    XCTAssertEqual(p.bridgeModeRawValue, "claudeCode")
+    XCTAssertEqual(p.attributionURL?.host, "claude.ai")
+    XCTAssertEqual(p.sfSymbol, "brain.head.profile")
+    XCTAssertFalse(p.tagline.isEmpty)
+  }
+
+  func testAIProviderAllContainsBothProviders() {
+    XCTAssertEqual(AIProvider.all.count, 2)
+    XCTAssertEqual(AIProvider.all.map(\.id), ["piMono", "claude"])
+  }
+
+  func testAIProviderFromBridgeModeReturnsCorrectProvider() {
+    XCTAssertEqual(AIProvider.from(bridgeMode: "piMono")?.id, "piMono")
+    XCTAssertEqual(AIProvider.from(bridgeMode: "claudeCode")?.id, "claude")
+    XCTAssertNil(AIProvider.from(bridgeMode: "unknown"))
+    XCTAssertNil(AIProvider.from(bridgeMode: "agentSDK"))
+  }
+
+  // MARK: - Rename completeness: no ACPBridge / acp-bridge in Swift sources
+
+  func testNoACPBridgeReferencesInSources() throws {
+    let sourcesDir = URL(fileURLWithPath: #filePath)
+      .deletingLastPathComponent()  // Tests/
+      .deletingLastPathComponent()  // Desktop/
+      .appendingPathComponent("Sources")
+
+    guard FileManager.default.fileExists(atPath: sourcesDir.path) else {
+      throw XCTSkip("Sources directory not found at \(sourcesDir.path)")
+    }
+
+    let patterns = ["ACPBridge", "acp-bridge", "acpBridge"]
+    var violations: [String] = []
+
+    let enumerator = FileManager.default.enumerator(
+      at: sourcesDir,
+      includingPropertiesForKeys: nil,
+      options: [.skipsHiddenFiles]
+    )!
+    while let url = enumerator.nextObject() as? URL {
+      guard url.pathExtension == "swift" else { continue }
+      let content = try String(contentsOf: url, encoding: .utf8)
+      for (i, line) in content.components(separatedBy: .newlines).enumerated() {
+        for pattern in patterns {
+          if line.contains(pattern) {
+            violations.append("\(url.lastPathComponent):\(i + 1): \(line.trimmingCharacters(in: .whitespaces))")
+          }
+        }
+      }
+    }
+
+    XCTAssertEqual(
+      violations, [],
+      "Found stale ACPBridge/acp-bridge references — renamed to AIBridge/ai-bridge in #6594:\n"
+        + violations.joined(separator: "\n"))
+  }
+
+  // MARK: - Legacy key backend wiring (source-level)
+
+  func testRustConfigServesLegacyAnthropicKey() throws {
+    let configRoutesPath = URL(fileURLWithPath: #filePath)
+      .deletingLastPathComponent()  // Tests/
+      .deletingLastPathComponent()  // Desktop/
+      .deletingLastPathComponent()  // desktop/
+      .appendingPathComponent("Backend-Rust/src/routes/config.rs")
+
+    guard FileManager.default.fileExists(atPath: configRoutesPath.path) else {
+      throw XCTSkip("config.rs not found at \(configRoutesPath.path)")
+    }
+
+    let src = try String(contentsOf: configRoutesPath, encoding: .utf8)
+
+    // The response struct must have anthropic_api_key field
+    XCTAssert(src.contains("anthropic_api_key: Option<String>"),
+      "ApiKeysResponse must contain anthropic_api_key for old client compat")
+
+    // It must be sourced from desktop_legacy_anthropic_key, NOT anthropic_api_key
+    XCTAssert(src.contains("desktop_legacy_anthropic_key.clone()"),
+      "anthropic_api_key must be sourced from desktop_legacy_anthropic_key, not anthropic_api_key")
+  }
 }
