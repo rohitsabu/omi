@@ -6,8 +6,14 @@
 //   - ElevenLabs: /v1/tts/synthesize (issue #6622)
 //   - Anthropic: kept server-side for /v2/chat/completions proxy only (issue #6594)
 //
-// Legacy compat: DESKTOP_LEGACY_ANTHROPIC_KEY is served as anthropic_api_key for
-// old app versions that still read it. Remove after the next major release.
+// Legacy compat (explicit manager decision for backward compat):
+// DESKTOP_LEGACY_ANTHROPIC_KEY is served as anthropic_api_key for old app
+// versions (pre-#6594) that read the key client-side. New app versions proxy
+// all Anthropic traffic server-side and ignore this field.
+// SECURITY NOTE: This is a deliberate tradeoff — old clients need the key to
+// function until the next major release forces an update. The env var is
+// separate from ANTHROPIC_API_KEY so operators can rotate independently.
+// TODO: Remove after major release when all clients use server-side proxy.
 
 use axum::{extract::State, routing::get, Json, Router};
 use serde::Serialize;

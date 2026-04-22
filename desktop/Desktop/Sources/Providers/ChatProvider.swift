@@ -522,9 +522,9 @@ A screenshot may be attached — use it silently only if relevant. Never mention
     }
     @AppStorage("chatBridgeMode") var bridgeMode: String = BridgeMode.piMono.rawValue
 
-    /// Whether the ACP bridge requires authentication (shown as sheet in UI)
+    /// Whether the AI bridge requires authentication (shown as sheet in UI)
     @Published var isClaudeAuthRequired = false
-    /// Auth methods returned by ACP bridge
+    /// Auth methods returned by AI bridge
     @Published var claudeAuthMethods: [[String: Any]] = []
     /// OAuth URL to open in browser (sent by bridge when auth is needed)
     @Published var claudeAuthUrl: String?
@@ -679,14 +679,14 @@ A screenshot may be attached — use it silently only if relevant. Never mention
                         return
                     }
                     guard self.aiBridgeStarted else { return }
-                    log("ChatProvider: Playwright extension setting changed, restarting ACP bridge")
+                    log("ChatProvider: Playwright extension setting changed, restarting AI bridge")
                     self.aiBridgeStarted = false
                     do {
                         try await self.aiBridge.restart()
                         self.aiBridgeStarted = true
-                        log("ChatProvider: ACP bridge restarted with new Playwright settings")
+                        log("ChatProvider: AI bridge restarted with new Playwright settings")
                     } catch {
-                        logError("Failed to restart ACP bridge after Playwright setting change", error: error)
+                        logError("Failed to restart AI bridge after Playwright setting change", error: error)
                     }
                 }
             }
@@ -699,7 +699,7 @@ A screenshot may be attached — use it silently only if relevant. Never mention
                 self.groupedSessions = self.computeGroupedSessions()
             }
 
-        // Kill ACP bridge subprocess on app quit to prevent orphaned Node.js processes
+        // Kill AI bridge subprocess on app quit to prevent orphaned Node.js processes
         terminationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
             object: nil, queue: .main
@@ -746,12 +746,12 @@ A screenshot may be attached — use it silently only if relevant. Never mention
         bridgeMode == BridgeMode.userClaude.rawValue
     }
 
-    /// Ensure the ACP bridge is started (restarts if the process died)
+    /// Ensure the AI bridge is started (restarts if the process died)
     private func ensureBridgeStarted() async -> Bool {
         if aiBridgeStarted {
             let alive = await aiBridge.isAlive
             if !alive {
-                log("ChatProvider: ACP bridge process died, will restart")
+                log("ChatProvider: AI bridge process died, will restart")
                 aiBridgeStarted = false
             }
         }
@@ -762,7 +762,7 @@ A screenshot may be attached — use it silently only if relevant. Never mention
             await preparePromptContextIfNeeded()
             try await aiBridge.start()
             aiBridgeStarted = true
-            log("ChatProvider: ACP bridge started successfully")
+            log("ChatProvider: AI bridge started successfully")
             // Set up global auth handlers so auth_required during warmup is handled
             await aiBridge.setGlobalAuthHandlers(
                 onAuthRequired: { [weak self] methods, authUrl in
@@ -793,7 +793,7 @@ A screenshot may be attached — use it silently only if relevant. Never mention
             ])
             return true
         } catch {
-            logError("Failed to start ACP bridge", error: error)
+            logError("Failed to start AI bridge", error: error)
             let rawError = String(describing: error)
             AnalyticsManager.shared.chatAgentError(error: "AI not available: bridge failed to start", rawError: rawError)
             errorMessage = "AI not available: \(error.localizedDescription)"
@@ -885,7 +885,7 @@ A screenshot may be attached — use it silently only if relevant. Never mention
     func disconnectClaude() async {
         log("ChatProvider: Disconnecting Claude account")
 
-        // 1. Stop the ACP bridge
+        // 1. Stop the AI bridge
         await aiBridge.stop()
         aiBridgeStarted = false
 
@@ -1619,7 +1619,7 @@ A screenshot may be attached — use it silently only if relevant. Never mention
         return prompt
     }
 
-    /// Run a single question through the ACP bridge for Chat Lab evaluation.
+    /// Run a single question through the AI bridge for Chat Lab evaluation.
     /// Uses a unique session key so it doesn't interfere with the real chat.
     func labRunQuestion(question: String, systemPrompt: String, sessionKey: String) async -> String {
         // Ensure bridge is running
@@ -2263,7 +2263,7 @@ A screenshot may be attached — use it silently only if relevant. Never mention
         var sqlQueryCount = 0
 
         do {
-            // Use the system prompt built at warmup. The ACP bridge applies it only
+            // Use the system prompt built at warmup. The AI bridge applies it only
             // at session/new; for the normal reused-session path it is ignored.
             // Passing it here ensures it is applied if the session was invalidated
             // (e.g. cwd change) and a new session/new is triggered mid-conversation.
@@ -2300,7 +2300,7 @@ A screenshot may be attached — use it silently only if relevant. Never mention
             }
 
             // Query the active bridge with streaming
-            // Callbacks for ACP bridge
+            // Callbacks for AI bridge
             let textDeltaHandler: AIBridge.TextDeltaHandler = { [weak self] delta in
                 Task { @MainActor [weak self] in
                     self?.appendToMessage(id: aiMessageId, text: delta)

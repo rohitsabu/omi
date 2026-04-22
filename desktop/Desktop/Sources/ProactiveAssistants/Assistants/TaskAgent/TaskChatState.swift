@@ -134,7 +134,7 @@ class TaskChatState: ObservableObject {
             try await bridge.start()
             aiBridge = bridge
             bridgeStarted = true
-            log("TaskChatState[\(taskId)]: ACP bridge started")
+            log("TaskChatState[\(taskId)]: AI bridge started")
             return true
         } catch {
             logError("TaskChatState[\(taskId)]: Failed to start bridge", error: error)

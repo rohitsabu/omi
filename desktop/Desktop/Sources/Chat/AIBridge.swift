@@ -105,7 +105,7 @@ actor AIBridge {
 
   // MARK: - Lifecycle
 
-  /// Start the Node.js ACP bridge process
+  /// Start the Node.js AI bridge process
   func start() async throws {
     guard !isRunning else { return }
 
@@ -968,7 +968,7 @@ enum BridgeError: LocalizedError {
         : "Node.js not found. Please reinstall the app."
     case .bridgeScriptNotFound:
       return AnalyticsManager.isDevBuild
-        ? "AI components missing. Run ./run.sh to install the ACP bridge."
+        ? "AI components missing. Run ./run.sh to install the AI bridge."
         : "AI components missing. Please reinstall the app."
     case .notRunning:
       return "AI is not running. Try sending your message again."

@@ -1,4 +1,4 @@
-// JSON lines protocol between Swift app and Node.js ACP bridge
+// JSON lines protocol between Swift app and Node.js AI bridge
 // Extended from agent-bridge protocol with authentication message types
 
 // === Swift → Bridge (stdin) ===
