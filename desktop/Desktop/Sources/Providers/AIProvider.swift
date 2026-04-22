@@ -26,7 +26,7 @@ struct AIProvider: Identifiable {
     displayName: "Omi AI",
     tagline: "Powered by pi-mono",
     attributionURL: URL(string: "https://pi.dev"),
-    sfSymbol: "sparkles",
+    sfSymbol: "pi",
     logoResource: nil,
     bridgeModeRawValue: "piMono"
   )
