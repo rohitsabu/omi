@@ -24,9 +24,9 @@ struct AIProvider: Identifiable {
   static let piMono = AIProvider(
     id: "piMono",
     displayName: "Omi AI",
-    tagline: "Built-in AI assistant",
-    attributionURL: URL(string: "https://omi.me"),
-    sfSymbol: "pi",
+    tagline: "Built-in AI assistant (built with pi.dev)",
+    attributionURL: nil,
+    sfSymbol: "",
     logoResource: nil,
     bridgeModeRawValue: "piMono"
   )
@@ -36,7 +36,7 @@ struct AIProvider: Identifiable {
     displayName: "Claude",
     tagline: "Your Claude Pro/Max subscription",
     attributionURL: URL(string: "https://claude.ai"),
-    sfSymbol: "brain.head.profile",
+    sfSymbol: "",
     logoResource: nil,
     bridgeModeRawValue: "claudeCode"
   )
