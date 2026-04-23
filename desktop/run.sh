@@ -62,6 +62,13 @@ if [ "$1" = "--yolo" ]; then
     export OMI_PYTHON_API_URL="https://api.omi.me"
     export OMI_AUTH_URL="https://omi-desktop-auth-208440318997.us-central1.run.app/"
     export FIREBASE_API_KEY="AIzaSyD9dzBdglc7IO9pPDIOvqnCoTis_xKkkC8"
+
+    # yolo implies "give me the full local dev loop minus the backend services",
+    # which includes the automation bridge. Respect an explicit opt-out if set.
+    : "${OMI_ENABLE_LOCAL_AUTOMATION:=1}"
+    export OMI_ENABLE_LOCAL_AUTOMATION
+    : "${OMI_AUTOMATION_PORT:=47777}"
+    export OMI_AUTOMATION_PORT
 fi
 
 # Clear system OPENAI_API_KEY so .env takes precedence
