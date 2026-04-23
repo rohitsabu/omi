@@ -208,6 +208,24 @@ final class DesktopAutomationBridge {
   }
 
   private func route(request: HTTPRequest) async -> HTTPResponse {
+    // Minutes lifecycle routes (Phase 1 of the minutes×omi merge). See
+    // MinutesBridge.swift for rationale. Keep these ahead of the default
+    // switch so we can match prefix/query-bearing paths without listing every
+    // permutation here.
+    if request.path.hasPrefix("/minutes/") {
+      if let (body, status) = await MinutesBridgeRouter.handle(
+        method: request.method,
+        path: request.path,
+        body: request.body
+      ) {
+        return HTTPResponse(
+          statusCode: status,
+          headers: ["Content-Type": "application/json"],
+          body: body
+        )
+      }
+    }
+
     switch (request.method, request.path) {
     case ("GET", "/health"):
       let snapshot = await DesktopAutomationStateStore.shared.current()
@@ -369,8 +387,11 @@ final class DesktopAutomationBridge {
     let statusText: String
     switch response.statusCode {
     case 200: statusText = "OK"
+    case 202: statusText = "Accepted"
     case 400: statusText = "Bad Request"
     case 404: statusText = "Not Found"
+    case 409: statusText = "Conflict"
+    case 503: statusText = "Service Unavailable"
     default: statusText = "Internal Server Error"
     }
 
