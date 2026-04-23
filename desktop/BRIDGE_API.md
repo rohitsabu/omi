@@ -386,6 +386,110 @@ needs writes they'll land behind a separate feature flag.
 
 ---
 
+## AI
+
+Local AI wiring lives in `Desktop/Sources/AIService.swift` (a Swift actor)
+and `Desktop/Sources/AIBridge.swift` (HTTP surface). The implementation
+shells out to the user's already-signed-in Claude Code CLI
+(`claude -p --dangerously-skip-permissions`) piping the prompt over stdin,
+with a 90s timeout and an 8 MiB stdout buffer — the same invariants
+`minutes-agent/scripts/v2/lib/enrich.ts` uses for its `claudeCliCallModel`
+path. No API keys are requested or stored. The Omi app stays signed-out
+against Omi's own cloud backend; AI is strictly a local subprocess.
+
+Why this shape: the user is already authenticated to Claude Code, so there
+is zero new secret surface for Omi Desktop to manage. `AIService` is a
+thin adapter — when we want lower latency later we can swap its single
+subprocess call for a direct Anthropic API request via
+`APIKeyService.effectiveAnthropicKey` without breaking the
+`ask(prompt:model:)` contract or any `/ai/*` route. See
+`desktop/AI_WIRING.md` for the full decision record, including the
+alternatives (direct Anthropic API, Agent SDK embed, multi-provider
+abstraction) and how to migrate to each.
+
+### `GET /ai/health`
+
+Probes whether `claude` is on PATH and responsive. Runs `claude --version`
+with a 3s timeout and caches the result for 30s (so `/state` polls stay
+cheap). Returns `200` when ready, `503` otherwise.
+
+```json
+{
+  "ok": true,
+  "provider": "claude-cli",
+  "ready": true,
+  "claudeVersion": "2.1.109 (Claude Code)",
+  "claudePath": "/Users/you/.local/bin/claude"
+}
+```
+
+On failure: `provider` may be `"none"` (binary missing) or `"claude-cli"`
+with `ready=false` (binary exists but `--version` failed). The `error`
+field carries a short human-readable detail.
+
+### `POST /ai/ask`
+
+Body:
+
+```json
+{ "prompt": "Reply with exactly the word PONG", "model": "claude-sonnet-4-6" }
+```
+
+- `prompt` (required) — trimmed; empty strings return `400 empty_prompt`.
+- `model` (optional) — slug forwarded as `--model`. Defaults to
+  `$MINUTES_V2_MODEL` then `claude-sonnet-4-6`.
+
+Success:
+
+```json
+{ "ok": true, "text": "PONG", "model": "claude-sonnet-4-6" }
+```
+
+Error shape mirrors other bridge routes: `{ "ok": false, "error": "<code>",
+"message": "<human>" }`. Status code by `error`:
+
+| Code | HTTP | Meaning |
+|---|---|---|
+| `empty_prompt` | 400 | Prompt was empty or whitespace. |
+| `bad_request` | 400 | Body wasn't valid JSON / didn't decode. |
+| `claude_not_installed` | 503 | `claude` binary not on augmented PATH. |
+| `claude_not_authenticated` | 503 | `claude` ran but stderr indicates sign-in required. |
+| `timeout` | 504 | Subprocess exceeded the 90s wall-clock. |
+| `invocation_failed` | 500 | Non-zero exit without a recognised sub-case. |
+| `bridge_disabled` | 503 | `OMI_ENABLE_LOCAL_AUTOMATION` is not set. |
+
+### `/state` additions
+
+`GET /state` now folds three AI fields into the existing snapshot:
+
+```json
+{
+  "aiProvider": "claude-cli",
+  "aiReady": true,
+  "aiError": null
+}
+```
+
+When the CLI is missing or unauthenticated, `aiProvider` becomes `"none"`
+(binary missing) or stays `"claude-cli"` (binary present, not ready); in
+both cases `aiReady=false` and `aiError` carries a one-line reason. The
+probe is cached for 30s, so `/state` remains cheap to poll.
+
+### Escape hatches
+
+- `OMI_CLAUDE_BIN_OVERRIDE=/abs/path/to/claude` — pin a specific binary.
+  When set to a path that doesn't exist, the bridge reports `aiReady=false`
+  and `/ai/ask` returns `503 claude_not_installed`. Used by
+  `bridge_ai.sh` for the missing-claude test case.
+- `OMI_CLAUDE_PATH_OVERRIDE=/colon/separated/PATH` — override the search
+  PATH without touching the process-wide `$PATH`. Useful for CI.
+- No config for the 90s timeout or 8 MiB buffer — these are hardcoded to
+  match `claude-runner.ts`. If you need to change them, change
+  `AIService.timeoutSeconds` and `AIService.maxStdoutBytes` in lockstep
+  with the minutes-agent side.
+
+---
+
 ## Tests
 
 `desktop/test/bridge_minutes.sh` is the contract smoke test. It asserts:
@@ -423,6 +527,25 @@ approved):
 ./desktop/test/bridge_calendar.sh
 SKIP_CALENDAR=1 ./desktop/test/bridge_calendar.sh
 ```
+
+`desktop/test/bridge_ai.sh` is the AI-wiring smoke test. It asserts:
+
+1. `GET /state` exposes the `aiProvider` and `aiReady` fields.
+2. `GET /ai/health` returns a known `provider` value and a version string
+   when ready.
+3. `POST /ai/ask` returns `ok:true` with non-empty text for a real prompt
+   (skipped automatically if claude-cli is not ready).
+4. `POST /ai/ask` with an empty prompt returns `HTTP 400 empty_prompt`.
+
+Run after `./run.sh --yolo` is up:
+
+```bash
+./desktop/test/bridge_ai.sh
+SKIP_ASK=1 ./desktop/test/bridge_ai.sh   # HTTP-shape only, no model call
+```
+
+The missing-claude path is documented inside the script and requires an
+app relaunch with `OMI_CLAUDE_BIN_OVERRIDE=/nonexistent/path`.
 
 ## Guardrails
 
