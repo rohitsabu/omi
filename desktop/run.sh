@@ -215,10 +215,80 @@ done
 find "$(dirname "$0")/../app/build" -name "$APP_NAME.app" -type d -exec rm -rf {} + 2>/dev/null || true
 # Kill stale app bundles from other repo clones (e.g. ~/omi-desktop/)
 # These confuse LaunchServices and get launched instead of the /Applications copy.
-find "$HOME" -maxdepth 4 -name "$APP_NAME.app" -type d -not -path "$APP_BUNDLE" -not -path "$APP_PATH" 2>/dev/null | while read stale; do
-    substep "Removing stale clone: $stale"
-    rm -rf "$stale"
-done
+#
+# Prior implementation did `find $HOME -maxdepth 4 …` which spent 3+ minutes
+# walking iCloud / Google Drive / OneDrive CloudStorage fuse mounts on every
+# run. Replace with:
+#   1. mdfind by bundle id  — Spotlight index, instant if the app has been
+#      indexed. Targets our canonical bundle so we don't catch unrelated
+#      "Omi Dev.app" artifacts that happen to share a name.
+#   2. Narrow-scope `find` across just the directories we actually care about
+#      (local Applications, system Applications, DerivedData, local build
+#      trees). Bounded with `gtimeout 10` when coreutils is installed,
+#      otherwise backgrounded-and-killed after 10s.
+#   3. Skip cloud-storage mounts entirely (~/Library/CloudStorage, iCloud).
+_omi_stale_prune() {
+    local stale
+    while IFS= read -r stale || [ -n "$stale" ]; do
+        # Skip canonical locations we don't want to delete (they'll be rebuilt).
+        case "$stale" in
+            ""|"$APP_BUNDLE"|"$APP_PATH"|"$APP_DESKTOP_PATH"|"$APP_DOWNLOADS_PATH") continue ;;
+        esac
+        # Defensive: never touch anything under /System or bare /Library.
+        case "$stale" in
+            /System/*|/Library/*) continue ;;
+        esac
+        if [ -d "$stale" ]; then
+            substep "Removing stale clone: $stale"
+            rm -rf "$stale"
+        fi
+    done
+}
+
+# 1) Spotlight lookup by bundle identifier (fast path — usually <100ms).
+_MDFIND_RESULTS=""
+if command -v mdfind >/dev/null 2>&1; then
+    _MDFIND_RESULTS="$(mdfind "kMDItemCFBundleIdentifier == '$BUNDLE_ID'" 2>/dev/null || true)"
+fi
+
+# 2) Narrow find as fallback / supplement. Explicit list of safe, local roots.
+_FIND_ROOTS=()
+[ -d "$HOME/Applications" ] && _FIND_ROOTS+=("$HOME/Applications")
+[ -d "/Applications" ] && _FIND_ROOTS+=("/Applications")
+[ -d "$HOME/Library/Developer/Xcode/DerivedData" ] && _FIND_ROOTS+=("$HOME/Library/Developer/Xcode/DerivedData")
+# Common sibling-repo locations from prior clones (bounded depth, cheap).
+[ -d "$HOME/Developer" ] && _FIND_ROOTS+=("$HOME/Developer")
+[ -d "$HOME/omi-desktop" ] && _FIND_ROOTS+=("$HOME/omi-desktop")
+
+_FIND_RESULTS=""
+if [ "${#_FIND_ROOTS[@]}" -gt 0 ]; then
+    if command -v gtimeout >/dev/null 2>&1; then
+        _FIND_RESULTS="$(gtimeout 10 find "${_FIND_ROOTS[@]}" -maxdepth 6 -name "$APP_NAME.app" -type d 2>/dev/null || true)"
+    else
+        # Background + hard kill after 10s. Stick the results in a tempfile since
+        # backgrounded subshells can't easily return stdout to the parent.
+        _FIND_TMP="$(mktemp -t omi-stale-find.XXXXXX)"
+        ( find "${_FIND_ROOTS[@]}" -maxdepth 6 -name "$APP_NAME.app" -type d 2>/dev/null > "$_FIND_TMP" ) &
+        _FIND_PID=$!
+        _FIND_WAITED=0
+        while kill -0 "$_FIND_PID" 2>/dev/null; do
+            if [ "$_FIND_WAITED" -ge 10 ]; then
+                kill -9 "$_FIND_PID" 2>/dev/null || true
+                substep "Stale-clone find timed out after 10s — skipping"
+                break
+            fi
+            sleep 1
+            _FIND_WAITED=$((_FIND_WAITED + 1))
+        done
+        _FIND_RESULTS="$(cat "$_FIND_TMP" 2>/dev/null || true)"
+        rm -f "$_FIND_TMP"
+    fi
+fi
+
+# Merge, dedupe, feed through the shared pruner.
+printf '%s\n%s\n' "$_MDFIND_RESULTS" "$_FIND_RESULTS" \
+    | awk 'NF && !seen[$0]++' \
+    | _omi_stale_prune
 
 if [ "${OMI_SKIP_TUNNEL:-0}" != "1" ]; then
     step "Starting Cloudflare quick tunnel..."
@@ -604,6 +674,9 @@ fi
 auth_debug "BEFORE signing: $(defaults read "$BUNDLE_ID" auth_isSignedIn 2>&1 || true)"
 
 step "Removing extended attributes (xattr -cr)..."
+# Some bundled dylibs (Homebrew libwebp, libsharpyuv) come in 444; xattr can't strip
+# attrs from read-only files. Make the bundle writable for the user before stripping.
+chmod -R u+w "$APP_BUNDLE"
 xattr -cr "$APP_BUNDLE"
 
 step "Signing app with hardened runtime..."
