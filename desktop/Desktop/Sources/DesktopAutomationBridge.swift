@@ -46,6 +46,16 @@ struct DesktopAutomationSnapshot: Codable {
   var isAppActive: Bool
   var mainWindowTitle: String?
   var updatedAt: String
+  /// Calendar (EventKit) TCC status. One of:
+  ///   "granted"       — full access was granted, /calendar/* routes will work
+  ///   "denied"        — user denied; re-enable in System Settings → Privacy → Calendars
+  ///   "restricted"    — e.g. MDM policy; calendar data is not reachable
+  ///   "notDetermined" — prompt has not fired yet. A /calendar/upcoming call
+  ///                     will force a prompt the first time, which is how we
+  ///                     bootstrap access on a fresh install.
+  /// Defaults to "notDetermined" at snapshot init; populated from
+  /// `CalendarAccessManager.currentStatusString()` when the snapshot is rebuilt.
+  var calendarAccess: String = "notDetermined"
 }
 
 struct DesktopAutomationNavigationRequest: Codable {
@@ -214,6 +224,21 @@ final class DesktopAutomationBridge {
     // permutation here.
     if request.path.hasPrefix("/minutes/") {
       if let (body, status) = await MinutesBridgeRouter.handle(
+        method: request.method,
+        path: request.path,
+        body: request.body
+      ) {
+        return HTTPResponse(
+          statusCode: status,
+          headers: ["Content-Type": "application/json"],
+          body: body
+        )
+      }
+    }
+
+    // Calendar (EventKit) routes (Phase 2). See CalendarBridge.swift.
+    if request.path.hasPrefix("/calendar/") {
+      if let (body, status) = await CalendarBridgeRouter.handle(
         method: request.method,
         path: request.path,
         body: request.body

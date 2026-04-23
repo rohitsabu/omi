@@ -497,7 +497,8 @@ struct DesktopHomeView: View {
       isRestoringAuth: authState.isRestoringAuth,
       isAppActive: NSApp.isActive,
       mainWindowTitle: currentWindow?.title,
-      updatedAt: ISO8601DateFormatter().string(from: Date())
+      updatedAt: ISO8601DateFormatter().string(from: Date()),
+      calendarAccess: CalendarAccessManager.currentStatusString()
     )
 
     Task {

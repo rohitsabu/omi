@@ -234,6 +234,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     DesktopAutomationBridge.shared.startIfNeeded()
 
+    // Kick the EventKit TCC prompt on first launch so the `/calendar/*` bridge
+    // routes aren't the first thing macOS sees (see CalendarAccessManager.swift).
+    // No-op once a decision (granted/denied) has been recorded.
+    CalendarAccessManager.requestAccessOnLaunch()
+
     // Strip com.apple.provenance xattrs that macOS adds when Sparkle extracts updates.
     // These break the code signature seal, causing the NEXT update to fail with
     // "An error occurred while running the updater."

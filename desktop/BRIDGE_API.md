@@ -227,6 +227,165 @@ curl -sS -X POST -H 'Content-Type: application/json' \
 
 ---
 
+## Calendar
+
+Phase 2 added a read-only `/calendar/*` surface backed by EventKit. The goal
+is to retire the cookie-based `CalendarReaderService` path (and the parallel
+TS calendar poller on the minutes-agent side) in favor of a single,
+TCC-approved EventKit integration inside the signed Omi app. Phase 2 *only*
+adds the data source — auto-triggering recordings from calendar events is
+Phase 3; retiring the TS poller is Phase 4.
+
+### Access model
+
+On first launch the app calls `EKEventStore.requestFullAccessToEvents` once.
+This fires the macOS Calendars TCC prompt if no prior decision exists for
+the bundle id. Approve it (or re-enable in System Settings → Privacy →
+Calendars if you missed the prompt) and the routes start returning events.
+
+**Hardened-runtime requirement.** Because Omi ships with hardened runtime,
+TCCD silently denies the Calendars request unless the app's entitlements
+declare `com.apple.security.personal-information.calendars = true`. The
+Info.plist `NSCalendarsFullAccessUsageDescription` key alone isn't enough —
+you'll see `Policy disallows prompt … requires entitlement
+com.apple.security.personal-information.calendars` in tccd logs if the
+entitlement is missing. Phase 2 added it to both
+`Desktop/Omi.entitlements` and `Desktop/Omi-Release.entitlements`.
+
+`GET /state` now includes a `calendarAccess` field with one of:
+
+| Value | Meaning |
+|---|---|
+| `granted` | Full access granted — `/calendar/*` routes will work. |
+| `denied` | User denied. Re-enable in System Settings → Privacy → Calendars. |
+| `restricted` | e.g. MDM policy; routes will 503 until lifted. |
+| `notDetermined` | Prompt hasn't fired yet. First `/calendar/upcoming` hit will force it. |
+
+```bash
+curl -sS http://127.0.0.1:47777/state | jq '.result.calendarAccess'
+```
+
+When status is not `granted`, every `/calendar/*` route returns `503`:
+
+```json
+{ "ok": false, "error": "calendar_access_denied",
+  "message": "EventKit access is \"denied\". Approve in System Settings → Privacy → Calendars and retry." }
+```
+
+### `GET /calendar/upcoming`
+
+Events starting within the next N minutes.
+
+Query params:
+
+| Param | Type | Default | Notes |
+|---|---|---|---|
+| `withinMinutes` | int | `60` | Window size. Max 43200 (30 days). `400 bad_request` outside range. |
+| `includeAllDay` | bool | `false` | Include events with `isAllDay=true`. |
+| `includeSubscribed` | bool | `false` | Include read-only subscribed calendars (holidays, birthdays, team feeds). Default excludes them. |
+
+Response shape:
+
+```json
+{
+  "ok": true,
+  "withinMinutes": 60,
+  "count": 2,
+  "events": [
+    {
+      "id": "B3C1…",
+      "title": "Sprint planning",
+      "startsAt": "2026-04-23T19:30:00Z",
+      "endsAt": "2026-04-23T20:00:00Z",
+      "location": "Zoom",
+      "organizer": "Rohit Sabu",
+      "attendees": ["Alice", "Bob", "carol@example.com"],
+      "isOnline": true,
+      "meetingUrl": "https://zoom.us/j/1234567890",
+      "calendarTitle": "Work",
+      "isAllDay": false,
+      "notes": null
+    }
+  ]
+}
+```
+
+`isOnline` is true iff the event has a URL pointing at a recognised video-
+conferencing host (`zoom.us`, `meet.google.com`, `webex.com`,
+`teams.microsoft.com`, `teams.live.com`, `bluejeans.com`). Detected across
+the event's dedicated URL field, location string, and notes body.
+`meetingUrl` is populated with the first match found.
+
+```bash
+curl -sS 'http://127.0.0.1:47777/calendar/upcoming?withinMinutes=120' | jq .
+curl -sS 'http://127.0.0.1:47777/calendar/upcoming?withinMinutes=60&includeAllDay=true' | jq .
+curl -sS 'http://127.0.0.1:47777/calendar/upcoming?includeSubscribed=true' | jq .
+```
+
+### `GET /calendar/active`
+
+The event currently in progress (if any). "In progress" means
+`startsAt ≤ now < endsAt`. All-day events are excluded. If multiple events
+overlap right now, `active` is the one with the earliest `startsAt` and
+`others` contains the rest (sorted by start time).
+
+Response:
+
+```json
+{
+  "ok": true,
+  "active": { "id": "B3C1…", "title": "Sprint planning", …as above },
+  "others": []
+}
+```
+
+When nothing is in progress `active` is `null` and `others` is empty.
+
+```bash
+curl -sS http://127.0.0.1:47777/calendar/active | jq .
+```
+
+### `GET /calendar/event`
+
+Single event detail, including notes.
+
+Query params:
+
+| Param | Type | Notes |
+|---|---|---|
+| `id` | string (required) | The EventKit identifier returned on upcoming/active responses. |
+
+Response:
+
+```json
+{
+  "ok": true,
+  "event": {
+    "id": "B3C1…",
+    "title": "Sprint planning",
+    …same fields as upcoming…,
+    "notes": "Agenda:\n1. Review last sprint…\n\nZoom link: https://zoom.us/…"
+  }
+}
+```
+
+Errors:
+
+- `400 bad_request` — missing `?id=`.
+- `404 event_not_found` — no event with that identifier.
+
+```bash
+curl -sS "http://127.0.0.1:47777/calendar/event?id=$(curl -sS http://127.0.0.1:47777/calendar/upcoming | jq -r '.events[0].id')" | jq .
+```
+
+### Read-only by design
+
+Phase 2 does not expose create/update/delete/RSVP. Omi does not write to the
+user's calendar; the automation surface mirrors that. If a future phase
+needs writes they'll land behind a separate feature flag.
+
+---
+
 ## Tests
 
 `desktop/test/bridge_minutes.sh` is the contract smoke test. It asserts:
@@ -247,6 +406,23 @@ Run it after `./run.sh --yolo` is up:
 
 Set `SKIP_CAPTURE=1` to hit only the `/state` check (useful when Minutes MCP
 isn't connected and you just want to smoke the bridge HTTP layer).
+
+`desktop/test/bridge_calendar.sh` is the Phase 2 calendar smoke test. It
+asserts:
+
+1. `GET /state` includes a `calendarAccess` field.
+2. `GET /calendar/upcoming` returns `{ ok: true, events: [...] }` — doesn't
+   assert on specific titles, the user's calendar is real.
+3. `GET /calendar/event?id=bogus-nonsense-id` returns 404 `event_not_found`.
+
+Set `SKIP_CALENDAR=1` to bypass if calendar access hasn't been granted yet
+(so a fresh install doesn't fail the smoke before the TCC prompt is
+approved):
+
+```bash
+./desktop/test/bridge_calendar.sh
+SKIP_CALENDAR=1 ./desktop/test/bridge_calendar.sh
+```
 
 ## Guardrails
 
