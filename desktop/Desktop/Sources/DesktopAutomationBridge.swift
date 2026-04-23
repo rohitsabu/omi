@@ -56,6 +56,15 @@ struct DesktopAutomationSnapshot: Codable {
   /// Defaults to "notDetermined" at snapshot init; populated from
   /// `CalendarAccessManager.currentStatusString()` when the snapshot is rebuilt.
   var calendarAccess: String = "notDetermined"
+  /// Local AI provider wiring. See `AIBridge.swift` / `AIService.swift`.
+  ///   - "claude-cli" when Claude Code is installed (ready or not)
+  ///   - "none"       when no local AI backend is resolvable
+  var aiProvider: String = "none"
+  /// True iff we believe `/ai/ask` would succeed right now. When false,
+  /// consumers should surface `aiError` to the user instead of retrying.
+  var aiReady: Bool = false
+  /// Short error string when `aiReady=false`. nil on the happy path.
+  var aiError: String?
 }
 
 struct DesktopAutomationNavigationRequest: Codable {
@@ -251,12 +260,27 @@ final class DesktopAutomationBridge {
       }
     }
 
+    // Local AI routes (this milestone). See AIBridge.swift.
+    if request.path.hasPrefix("/ai/") {
+      if let (body, status) = await AIBridgeRouter.handle(
+        method: request.method,
+        path: request.path,
+        body: request.body
+      ) {
+        return HTTPResponse(
+          statusCode: status,
+          headers: ["Content-Type": "application/json"],
+          body: body
+        )
+      }
+    }
+
     switch (request.method, request.path) {
     case ("GET", "/health"):
-      let snapshot = await DesktopAutomationStateStore.shared.current()
+      let snapshot = await snapshotWithAI()
       return jsonResponse(DesktopAutomationResponse(ok: true, result: snapshot, error: nil))
     case ("GET", "/state"):
-      let snapshot = await DesktopAutomationStateStore.shared.current()
+      let snapshot = await snapshotWithAI()
       return jsonResponse(DesktopAutomationResponse(ok: true, result: snapshot, error: nil))
     case ("POST", "/navigate"):
       do {
@@ -264,7 +288,7 @@ final class DesktopAutomationBridge {
           DesktopAutomationNavigationRequest.self, from: request.body)
         try await dispatchNavigation(payload)
         try await Task.sleep(for: .milliseconds(150))
-        let snapshot = await DesktopAutomationStateStore.shared.current()
+        let snapshot = await snapshotWithAI()
         return jsonResponse(DesktopAutomationResponse(ok: true, result: snapshot, error: nil))
       } catch {
         return jsonResponse(
@@ -282,7 +306,7 @@ final class DesktopAutomationBridge {
           DesktopAutomationOpenConversationRequest.self, from: request.body)
         try await dispatchOpenConversation(payload)
         try await Task.sleep(for: .milliseconds(350))
-        let snapshot = await DesktopAutomationStateStore.shared.current()
+        let snapshot = await snapshotWithAI()
         return jsonResponse(DesktopAutomationResponse(ok: true, result: snapshot, error: nil))
       } catch {
         return jsonResponse(
@@ -380,6 +404,17 @@ final class DesktopAutomationBridge {
         window.makeKeyAndOrderFront(nil)
       }
     }
+  }
+
+  /// Fetch the base snapshot and fold in the AI fields from `AIBridgeState`.
+  /// The probe is cached inside `AIService` for 30s so /state polls stay cheap.
+  private func snapshotWithAI() async -> DesktopAutomationSnapshot {
+    var snapshot = await DesktopAutomationStateStore.shared.current()
+    let ai = await AIBridgeState.currentAIFields()
+    snapshot.aiProvider = ai.aiProvider
+    snapshot.aiReady = ai.aiReady
+    snapshot.aiError = ai.aiError
+    return snapshot
   }
 
   private func jsonResponse<T: Codable>(_ payload: T, statusCode: Int = 200) -> HTTPResponse {
