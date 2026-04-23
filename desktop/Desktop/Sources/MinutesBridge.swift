@@ -2,34 +2,23 @@ import Foundation
 
 // MARK: - MinutesBridge
 //
-// Phase 1 of the minutes×omi merge. This file bolts a `/minutes/*` surface onto
-// the existing `DesktopAutomationBridge` so external tooling (curl, scheduled
-// cowork jobs, the old minutes-agent TS watchers during the transition) can
-// drive the meeting lifecycle without shelling out or file-watching from the
-// consumer side.
-//
-// Mechanism: we wrap the existing minutes-agent TypeScript pipeline.
-//   POST /minutes/start   → `scripts/record-now.ts  --title "…"`
-//   POST /minutes/stop    → `scripts/stop-now.ts    --event-id <id>`
+// HTTP surface for the minutes lifecycle on the Omi automation bridge.
+// Routes:
+//   POST /minutes/start      → MinutesLifecycleService.start(title:source:)
+//   POST /minutes/stop       → MinutesLifecycleService.stop(meetingId:)
 //   GET  /minutes/transcript → read `<folder>/transcript.md` from disk
-//   POST /minutes/enrich  → `scripts/v2/post-meeting-enrich.ts --meeting <path>`
+//   POST /minutes/enrich     → spawn `scripts/v2/post-meeting-enrich.ts`
+//                              (the only TS that survived Phase 4)
 //
-// Why wrap the TS scripts instead of calling the Minutes MCP directly, or
-// inventing a new Swift capture path?
-//   * The TS scripts are the only path that is *solid today* — they already
-//     handle Minutes MCP handshake, capture-controller + transcript-watcher
-//     child processes, `state.json` bookkeeping, and the exact folder layout
-//     `PostMeetingService` expects downstream.
-//   * Re-implementing in Swift now would duplicate work that Phase 3 of
-//     OMI_CONSOLIDATION.md is going to rewrite anyway. Phase 1 is about
-//     exposing an API surface, not porting capture.
-//   * Calling the Minutes MCP directly from Swift would require a second MCP
-//     client in the app and would miss the state-file and sidecar behavior
-//     minutes-agent adds on top.
+// Phase 4 (2026-04-24) deleted the Phase 1 shell-out path to
+// `scripts/record-now.ts` + `scripts/stop-now.ts` — the Swift actor is now
+// the only implementation of record/stop. The enricher continues to live in
+// TS as a fire-and-forget subprocess; `MinutesSubprocess` below is the only
+// remaining shell-out runner and exists solely to launch it.
 //
 // This file is deliberately self-contained — no changes to AppState, no new
-// dependencies. The only touch outside this file is four case statements added
-// to `DesktopAutomationBridge.route(_:)`.
+// dependencies. The only touch outside this file is four case statements
+// added to `DesktopAutomationBridge.route(_:)`.
 
 // MARK: Request / Response shapes
 
@@ -97,7 +86,6 @@ actor MinutesBridgeService {
   }
 
   private var sessions: [String: Session] = [:]
-  private var enrichJobs: [String: UUID] = [:]  // meetingId → jobId
 
   func register(_ session: Session) {
     sessions[session.meetingId] = session
@@ -112,10 +100,6 @@ actor MinutesBridgeService {
 
   func session(_ meetingId: String) -> Session? {
     sessions[meetingId]
-  }
-
-  func recordEnrichJob(_ jobId: UUID, for meetingId: String) {
-    enrichJobs[meetingId] = jobId
   }
 }
 
@@ -165,11 +149,10 @@ enum MinutesBridgeRouter {
 
 // MARK: - Handlers
 //
-// Phase 3 change: each handler dispatches on `MinutesLifecycleEnv.lifecycleMode()`
-// to pick either the native Swift actor (`MinutesLifecycleService.shared`, the
-// default) or the Phase 1 TS shell-out path (retained for instant rollback
-// behind `OMI_MINUTES_LIFECYCLE=ts`). The HTTP response shape is identical in
-// both modes — see `BRIDGE_API.md § Phase 3 note`.
+// Phase 4 (2026-04-24): the per-route mode dispatch is gone. The Swift actor
+// (`MinutesLifecycleService.shared`) is the only implementation. The TS
+// fallback path (`scripts/record-now.ts` / `scripts/stop-now.ts`) was deleted
+// alongside the `OMI_MINUTES_LIFECYCLE` env switch.
 
 enum MinutesBridgeHandlers {
   static func start(body: Data) async -> (Data, Int) {
@@ -187,22 +170,13 @@ enum MinutesBridgeHandlers {
     let title = req.title ?? "Manual capture \(Self.hhmm(Date()))"
     let source = req.source ?? "manual"
 
-    switch MinutesLifecycleEnv.lifecycleMode() {
-    case .swift:
-      return await startSwift(title: title, source: source)
-    case .ts:
-      return await startTS(title: title, source: source)
-    }
-  }
-
-  /// Phase 3 default path — native Swift MCP client + state persistence.
-  private static func startSwift(title: String, source: String) async -> (Data, Int) {
     do {
       let outcome = try await MinutesLifecycleService.shared.start(
         title: title, source: source)
-      // Also register a bridge-side session so the existing TS-era consumers
-      // that call `MinutesBridgeService.shared.session(...)` keep working.
-      // Dual-writing is cheap and avoids a migration.
+      // Mirror the session into the bridge-side cache so the disk-backed
+      // /minutes/transcript and /minutes/enrich routes can still resolve a
+      // folder when the actor's in-memory map is empty (e.g. across an app
+      // restart before hydration runs).
       let session = MinutesBridgeService.Session(
         meetingId: outcome.meetingId,
         folder: outcome.folder,
@@ -212,7 +186,7 @@ enum MinutesBridgeHandlers {
         stoppedAt: nil
       )
       await MinutesBridgeService.shared.register(session)
-      log("MinutesBridge(swift): /minutes/start → meetingId=\(outcome.meetingId) folder=\(outcome.folder)")
+      log("MinutesBridge: /minutes/start → meetingId=\(outcome.meetingId) folder=\(outcome.folder)")
       let payload = MinutesStartResult(
         ok: true,
         meetingId: outcome.meetingId,
@@ -222,58 +196,12 @@ enum MinutesBridgeHandlers {
       )
       return (MinutesBridgeRouter.successBody(payload), 200)
     } catch let err as MinutesLifecycleError {
-      log("MinutesBridge(swift): /minutes/start failed: \(err)")
+      log("MinutesBridge: /minutes/start failed: \(err)")
       return (MinutesBridgeRouter.errorBody("capture_failed", String(describing: err)), 500)
     } catch {
-      log("MinutesBridge(swift): /minutes/start unexpected error: \(error)")
+      log("MinutesBridge: /minutes/start unexpected error: \(error)")
       return (MinutesBridgeRouter.errorBody("capture_failed", String(describing: error)), 500)
     }
-  }
-
-  /// Phase 1 legacy path — shells out to `scripts/record-now.ts`. Retained as
-  /// the `OMI_MINUTES_LIFECYCLE=ts` fallback until Phase 4 deletes the TS.
-  private static func startTS(title: String, source: String) async -> (Data, Int) {
-    let result = await MinutesSubprocess.run(
-      script: "scripts/record-now.ts",
-      args: ["--title", title],
-      captureStdout: true,
-      detach: false,
-      timeoutSec: 30
-    )
-
-    guard result.exitCode == 0 else {
-      log("MinutesBridge(ts): /minutes/start record-now.ts exited \(result.exitCode): \(result.stderr.prefix(500))")
-      return (MinutesBridgeRouter.errorBody(
-        "capture_failed",
-        "record-now.ts exited \(result.exitCode). stderr: \(String(result.stderr.prefix(500)))"), 500)
-    }
-
-    guard let (meetingId, folder) = Self.parseRecordNowOutput(result.stdout) else {
-      log("MinutesBridge(ts): /minutes/start could not parse record-now.ts stdout: \(result.stdout.prefix(500))")
-      return (MinutesBridgeRouter.errorBody(
-        "capture_parse_failed", "record-now.ts stdout did not contain a meetingId JSON line"), 500)
-    }
-
-    let now = Date()
-    let session = MinutesBridgeService.Session(
-      meetingId: meetingId,
-      folder: folder,
-      title: title,
-      source: source,
-      startedAt: now,
-      stoppedAt: nil
-    )
-    await MinutesBridgeService.shared.register(session)
-    log("MinutesBridge(ts): /minutes/start → meetingId=\(meetingId) folder=\(folder)")
-
-    let payload = MinutesStartResult(
-      ok: true,
-      meetingId: meetingId,
-      startedAt: Self.iso(now),
-      outputPath: folder,
-      title: title
-    )
-    return (MinutesBridgeRouter.successBody(payload), 200)
   }
 
   static func stop(body: Data) async -> (Data, Int) {
@@ -284,22 +212,13 @@ enum MinutesBridgeHandlers {
       return (MinutesBridgeRouter.errorBody("bad_request", "invalid JSON body: \(error)"), 400)
     }
 
-    switch MinutesLifecycleEnv.lifecycleMode() {
-    case .swift:
-      return await stopSwift(meetingId: req.meetingId)
-    case .ts:
-      return await stopTS(meetingId: req.meetingId)
-    }
-  }
-
-  private static func stopSwift(meetingId: String) async -> (Data, Int) {
     do {
-      let outcome = try await MinutesLifecycleService.shared.stop(meetingId: meetingId)
-      _ = await MinutesBridgeService.shared.markStopped(meetingId, at: outcome.stoppedAt)
-      log("MinutesBridge(swift): /minutes/stop meetingId=\(meetingId) durationSec=\(outcome.durationSec)")
+      let outcome = try await MinutesLifecycleService.shared.stop(meetingId: req.meetingId)
+      _ = await MinutesBridgeService.shared.markStopped(req.meetingId, at: outcome.stoppedAt)
+      log("MinutesBridge: /minutes/stop meetingId=\(req.meetingId) durationSec=\(outcome.durationSec)")
       let payload = MinutesStopResult(
         ok: true,
-        meetingId: meetingId,
+        meetingId: req.meetingId,
         stoppedAt: Self.iso(outcome.stoppedAt),
         durationSec: outcome.durationSec,
         transcriptPath: outcome.transcriptPath,
@@ -310,50 +229,12 @@ enum MinutesBridgeHandlers {
       return (MinutesBridgeRouter.errorBody(
         "unknown_meeting", "no active session for meetingId=\(id)"), 404)
     } catch let err as MinutesLifecycleError {
-      log("MinutesBridge(swift): /minutes/stop failed: \(err)")
+      log("MinutesBridge: /minutes/stop failed: \(err)")
       return (MinutesBridgeRouter.errorBody("stop_failed", String(describing: err)), 500)
     } catch {
-      log("MinutesBridge(swift): /minutes/stop unexpected error: \(error)")
+      log("MinutesBridge: /minutes/stop unexpected error: \(error)")
       return (MinutesBridgeRouter.errorBody("stop_failed", String(describing: error)), 500)
     }
-  }
-
-  private static func stopTS(meetingId: String) async -> (Data, Int) {
-    guard let session = await MinutesBridgeService.shared.session(meetingId) else {
-      return (MinutesBridgeRouter.errorBody(
-        "unknown_meeting", "no active session for meetingId=\(meetingId)"), 404)
-    }
-
-    let result = await MinutesSubprocess.run(
-      script: "scripts/stop-now.ts",
-      args: ["--event-id", meetingId],
-      captureStdout: true,
-      detach: false,
-      timeoutSec: 60
-    )
-
-    guard result.exitCode == 0 else {
-      log("MinutesBridge(ts): /minutes/stop stop-now.ts exited \(result.exitCode): \(result.stderr.prefix(500))")
-      return (MinutesBridgeRouter.errorBody(
-        "stop_failed",
-        "stop-now.ts exited \(result.exitCode). stderr: \(String(result.stderr.prefix(500)))"), 500)
-    }
-
-    let now = Date()
-    _ = await MinutesBridgeService.shared.markStopped(meetingId, at: now)
-    let durationSec = Int(now.timeIntervalSince(session.startedAt))
-    let transcriptPath = (session.folder as NSString).appendingPathComponent("transcript.md")
-    log("MinutesBridge(ts): /minutes/stop meetingId=\(meetingId) durationSec=\(durationSec)")
-
-    let payload = MinutesStopResult(
-      ok: true,
-      meetingId: meetingId,
-      stoppedAt: Self.iso(now),
-      durationSec: durationSec,
-      transcriptPath: transcriptPath,
-      audioPath: nil
-    )
-    return (MinutesBridgeRouter.successBody(payload), 200)
   }
 
   static func transcript(rawPath: String) async -> (Data, Int) {
@@ -365,16 +246,14 @@ enum MinutesBridgeHandlers {
         "bad_request", "missing ?meetingId=… query parameter"), 400)
     }
 
-    // Try the Swift lifecycle first so we resolve sessions started under
-    // `OMI_MINUTES_LIFECYCLE=swift`; fall through to the TS-era bridge cache
-    // so sessions started under `=ts` still resolve.
+    // Resolve folder: ask the Swift lifecycle actor first; fall back to the
+    // bridge-side session cache as a defensive measure (e.g. if the actor's
+    // in-memory map hasn't hydrated from state.json yet).
     var folder: String? = nil
     var isFinalFromActor: Bool? = nil
-    if MinutesLifecycleEnv.lifecycleMode() == .swift {
-      if let rec = await MinutesLifecycleService.shared.recording(meetingId) {
-        folder = rec.meetingFolder
-        isFinalFromActor = await MinutesLifecycleService.shared.transcriptIsFinal(meetingId)
-      }
+    if let rec = await MinutesLifecycleService.shared.recording(meetingId) {
+      folder = rec.meetingFolder
+      isFinalFromActor = await MinutesLifecycleService.shared.transcriptIsFinal(meetingId)
     }
     var session: MinutesBridgeService.Session? = nil
     if folder == nil {
@@ -396,8 +275,7 @@ enum MinutesBridgeHandlers {
       text = ""
     }
     // `isFinal` semantics: transcript.md exists AND the session has been
-    // stopped. Swift actor tracks its own finalisation state; TS sessions
-    // fall back to the bridge cache's stoppedAt.
+    // stopped. Actor tracks its own finalisation state when known.
     let isFinal: Bool
     if let actor = isFinalFromActor {
       isFinal = actor && exists
@@ -422,14 +300,12 @@ enum MinutesBridgeHandlers {
       return (MinutesBridgeRouter.errorBody("bad_request", "invalid JSON body: \(error)"), 400)
     }
 
-    // Resolve transcript path: explicit override wins; else try Swift
-    // lifecycle folder; else fall back to the TS-era bridge cache.
+    // Resolve transcript path: explicit override wins, then the Swift
+    // lifecycle folder, then the bridge-side cache.
     var transcriptPath: String? = nil
     if let explicit = req.transcriptPath, !explicit.isEmpty {
       transcriptPath = explicit
-    } else if MinutesLifecycleEnv.lifecycleMode() == .swift,
-              let rec = await MinutesLifecycleService.shared.recording(req.meetingId)
-    {
+    } else if let rec = await MinutesLifecycleService.shared.recording(req.meetingId) {
       transcriptPath = (rec.meetingFolder as NSString).appendingPathComponent("transcript.md")
     } else if let session = await MinutesBridgeService.shared.session(req.meetingId) {
       transcriptPath = (session.folder as NSString).appendingPathComponent("transcript.md")
@@ -447,29 +323,10 @@ enum MinutesBridgeHandlers {
         "transcript does not exist at \(transcriptPath) (meeting may not be stopped yet)"), 409)
     }
 
-    // The enricher stays in TS in both modes — Phase 3 doesn't port it.
-    // Under `swift` we delegate to `MinutesLifecycleService.enrich(...)` so
-    // the jobId is tracked alongside other lifecycle state; under `ts` we
-    // preserve the Phase 1 behaviour exactly.
-    let jobId: UUID
-    switch MinutesLifecycleEnv.lifecycleMode() {
-    case .swift:
-      jobId = await MinutesLifecycleService.shared.enrich(
-        transcriptPath: transcriptPath, meetingId: req.meetingId)
-    case .ts:
-      jobId = UUID()
-      await MinutesBridgeService.shared.recordEnrichJob(jobId, for: req.meetingId)
-      Task.detached(priority: .utility) {
-        let outcome = await MinutesSubprocess.run(
-          script: "scripts/v2/post-meeting-enrich.ts",
-          args: ["--meeting", transcriptPath, "--no-notify"],
-          captureStdout: false,
-          detach: false,
-          timeoutSec: 600
-        )
-        log("MinutesBridge(ts): enrich job \(jobId) exited \(outcome.exitCode) for meetingId=\(req.meetingId)")
-      }
-    }
+    // Enricher is the only TS that survived Phase 4; the actor owns the
+    // subprocess + jobId bookkeeping.
+    let jobId = await MinutesLifecycleService.shared.enrich(
+      transcriptPath: transcriptPath, meetingId: req.meetingId)
 
     let payload = MinutesEnrichResult(
       ok: true,
@@ -481,21 +338,6 @@ enum MinutesBridgeHandlers {
   }
 
   // MARK: - Parsing helpers
-
-  static func parseRecordNowOutput(_ stdout: String) -> (meetingId: String, folder: String)? {
-    // Walk stdout line-by-line looking for a JSON object with meetingId.
-    for line in stdout.split(whereSeparator: { $0 == "\n" || $0 == "\r" }) {
-      let trimmed = String(line).trimmingCharacters(in: .whitespaces)
-      guard trimmed.hasPrefix("{"), trimmed.hasSuffix("}") else { continue }
-      guard let data = trimmed.data(using: .utf8),
-            let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-            let meetingId = obj["meetingId"] as? String,
-            let folder = obj["folder"] as? String
-      else { continue }
-      return (meetingId, folder)
-    }
-    return nil
-  }
 
   static func queryParam(_ query: String, key: String) -> String? {
     for pair in query.split(separator: "&") {

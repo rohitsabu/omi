@@ -2,45 +2,38 @@ import Foundation
 
 // MARK: - MinutesLifecycle
 //
-// Phase 3 of the minutes×omi merge. Ports the record/stop lifecycle
-// (previously implemented as `scripts/record-now.ts` + `scripts/stop-now.ts`
-// in `minutes-agent`) into a native Swift actor that lives inside the Omi
-// app.
+// Native Swift implementation of the meeting record/stop lifecycle. As of
+// Phase 4 (2026-04-24) this is the *only* implementation — the TS lifecycle
+// (`scripts/record-now.ts` + `scripts/stop-now.ts`) and the
+// `OMI_MINUTES_LIFECYCLE` mode switch are gone.
 //
 // Scope:
-//   * Spawn `npx minutes-mcp` as a long-lived subprocess and speak the MCP
-//     JSON-RPC 2.0 protocol over newline-delimited JSON on stdio. That's
-//     the same protocol the TS `@modelcontextprotocol/sdk` StdioClientTransport
-//     speaks — we hand-roll a minimal client here because Omi doesn't already
-//     ship a reusable MCP abstraction (ACPBridge speaks a custom line protocol,
-//     not MCP JSON-RPC).
-//   * Own an in-memory registry of active/recently-active recordings keyed by
-//     the caller-owned `manual-<iso>` correlation handle (see
-//     `MINUTES_MCP_PROTOCOL.md` — Minutes doesn't return a durable id, so the
-//     caller mints one).
-//   * Mirror the TS folder conventions so everything downstream (the TS
-//     enricher, any folder-organiser consumers, audit tooling) keeps working
-//     without knowing which implementation produced the folder.
+//   * Spawn `npx minutes-mcp` as a long-lived subprocess and speak MCP
+//     JSON-RPC 2.0 over newline-delimited JSON on stdio (same wire protocol
+//     the TS `@modelcontextprotocol/sdk` StdioClientTransport speaks). We
+//     hand-roll a minimal client because Omi doesn't already ship a reusable
+//     MCP abstraction — ACPBridge speaks a custom line protocol, not MCP.
+//   * Own an in-memory registry of active/recently-active recordings keyed
+//     by the caller-owned `manual-<iso>` correlation handle (see
+//     `MINUTES_MCP_PROTOCOL.md` — Minutes doesn't return a durable id, so
+//     the caller mints one).
+//   * Mirror the legacy TS folder conventions so the enricher and any audit
+//     tooling that read those folders keep working unchanged.
 //   * Persist state to `~/Library/Application Support/minutes-agent/state.json`
-//     using the *same* schema as `scripts/lib/state.ts`. Decision: we did
-//     not migrate to an Omi-owned store because (a) the TS fallback path must
-//     keep working under `OMI_MINUTES_LIFECYCLE=ts`, and (b) two stores in
-//     Phase 3 would mean reconciling them. Phase 4, when the TS goes away,
-//     can move this to an Omi-owned location or onto GRDB.
+//     using the same schema as the historical `scripts/lib/state.ts`. The
+//     module path is preserved for archival reasons; nothing in Swift reads
+//     `state.ts` and the enricher doesn't either.
 //   * Provide a fire-and-forget invocation path for the TS enricher
-//     (`scripts/v2/post-meeting-enrich.ts`). The enricher stays in TS for now
-//     — Phase 3 explicitly doesn't port it.
+//     (`scripts/v2/post-meeting-enrich.ts`). The enricher is the one TS
+//     surface that survived Phase 4 — see `OMI_CONSOLIDATION.md § Phase 4`.
 //
 // Out of scope:
-//   * Snapshot / full-video promotion (driven by transcript keywords in
-//     `scripts/transcript-watcher.ts`). Not needed for the `/minutes/*` bridge
-//     surface; if we want this inside Omi later, it lands as a separate
-//     service.
-//   * Post-meeting enrichment logic. The Swift side just spawns the TS script.
-//
-// HTTP contract: unchanged from Phase 1. Every byte of every response from
-// `/minutes/start|stop|transcript|enrich` matches what `MinutesBridge.swift`
-// already returned via the TS shell-out path.
+//   * Snapshot / full-video promotion (was driven by transcript keywords in
+//     the deleted `scripts/transcript-watcher.ts`). Not needed for the
+//     `/minutes/*` bridge surface; if we want this inside Omi later, it
+//     lands as a separate service.
+//   * Post-meeting enrichment logic. The Swift side just spawns the TS
+//     script.
 
 // MARK: - JSON-RPC framing types
 
@@ -745,16 +738,11 @@ enum MinutesLifecycleEnv {
     return env
   }
 
-  /// Lifecycle mode selector. Phase 3 adds this flag so we can fall back to
-  /// the Phase 1 TS shell-out path instantly if the Swift lifecycle
-  /// regresses. Default: `swift`. Override with `OMI_MINUTES_LIFECYCLE=ts`.
-  enum LifecycleMode: String { case swift, ts }
-  static func lifecycleMode() -> LifecycleMode {
-    let raw = ProcessInfo.processInfo.environment["OMI_MINUTES_LIFECYCLE"]?
-      .trimmingCharacters(in: .whitespacesAndNewlines)
-      .lowercased() ?? "swift"
-    return LifecycleMode(rawValue: raw) ?? .swift
-  }
+  // Phase 4 (2026-04-24): the `LifecycleMode` enum and `lifecycleMode()`
+  // selector have been removed. Swift is the only lifecycle implementation
+  // — no `OMI_MINUTES_LIFECYCLE` switch, no TS fallback. If a regression
+  // ever forces a temporary fallback, expand `.phase-4-rollback.tar.gz` in
+  // minutes-agent/ and revert this file's history.
 }
 
 // MARK: - Lifecycle actor
@@ -1013,8 +1001,10 @@ actor MinutesLifecycleService {
 
   // MARK: - Internals
 
-  /// One-shot rehydration from `state.json` so we pick up any entries written
-  /// by a previous Swift run (or by the TS side under `OMI_MINUTES_LIFECYCLE=ts`).
+  /// One-shot rehydration from `state.json` so we pick up any entries
+  /// written by a previous Swift run. (Pre-Phase-4, the TS lifecycle could
+  /// also write here — that path is gone, but the file format is preserved
+  /// for archival continuity.)
   private func hydrateIfNeeded() {
     if hasHydratedFromDisk { return }
     hasHydratedFromDisk = true

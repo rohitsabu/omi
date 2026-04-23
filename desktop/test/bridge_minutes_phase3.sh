@@ -18,8 +18,8 @@
 #      Rohit's normal dev loop — manual verification is still the canonical
 #      path. Set SKIP_GRACEFUL=0 explicitly to exercise it.
 #
-#   4. Regression run with `OMI_MINUTES_LIFECYCLE=ts` — ensures the Phase 1
-#      TS shell-out path still works as the fallback lane.
+# Phase 4 (2026-04-24) removed the TS-fallback regression leg — record-now.ts
+# and stop-now.ts no longer exist; Swift is the only lifecycle path.
 #
 # Preconditions:
 #   - Omi Desktop is built and running under `./run.sh --yolo`.
@@ -32,7 +32,6 @@
 #   ./desktop/test/bridge_minutes_phase3.sh
 #   SKIP_MCP=1 ./desktop/test/bridge_minutes_phase3.sh   # skip real recording
 #   SKIP_ENRICH=1 ./desktop/test/bridge_minutes_phase3.sh # skip enricher leg
-#   SKIP_TS_FALLBACK=1 ./desktop/test/bridge_minutes_phase3.sh
 #   SKIP_GRACEFUL=0 ./desktop/test/bridge_minutes_phase3.sh # exercise SIGTERM relaunch
 #
 # Exit non-zero on any assertion failure.
@@ -44,7 +43,6 @@ BASE="http://127.0.0.1:${PORT}"
 TITLE="${TITLE:-phase3 smoke $(date +%H%M%S)}"
 SKIP_MCP="${SKIP_MCP:-0}"
 SKIP_ENRICH="${SKIP_ENRICH:-0}"
-SKIP_TS_FALLBACK="${SKIP_TS_FALLBACK:-0}"
 SKIP_GRACEFUL="${SKIP_GRACEFUL:-1}"
 RECORD_SECONDS="${RECORD_SECONDS:-8}"
 ENRICH_TIMEOUT_SEC="${ENRICH_TIMEOUT_SEC:-180}"
@@ -232,40 +230,8 @@ else
   printf "  NOTE: re-run './run.sh --yolo' to relaunch Omi Dev.\n"
 fi
 
-# 4. TS fallback regression — spin one record cycle through OMI_MINUTES_LIFECYCLE=ts.
-# We can't set the env var on the already-running bridge, so this leg asserts
-# that the TS record-now.ts and stop-now.ts scripts still execute cleanly on
-# their own. A full `OMI_MINUTES_LIFECYCLE=ts ./run.sh --yolo` regression is a
-# manual step; this checks the TS scripts remain well-formed & usable.
-if [[ "$SKIP_TS_FALLBACK" == "1" ]]; then
-  skip "TS fallback regression disabled (SKIP_TS_FALLBACK=1)"
-else
-  header "TS fallback — invoke scripts/record-now.ts + stop-now.ts directly"
-  pushd "$OMI_MINUTES_AGENT_DIR" >/dev/null
-  # --dry-run on record-now currently uses `dry-` IDs which post-meeting can't
-  # resolve, but it's enough to confirm the TS script parses and spawns its
-  # children. We invoke without --dry-run and then immediately stop to keep
-  # state.json clean.
-  TS_TITLE="phase3-ts-fallback $(date +%H%M%S)"
-  RECORD_OUT=$(OMI_MINUTES_LIFECYCLE=ts npx tsx scripts/record-now.ts --title "$TS_TITLE" 2>/dev/null | tail -1 || true)
-  if [[ -z "$RECORD_OUT" ]]; then
-    skip "record-now.ts produced no stdout (Minutes MCP may be unavailable in this shell)"
-  else
-    TS_ID=$(echo "$RECORD_OUT" | jq -r '.meetingId // empty' 2>/dev/null || true)
-    if [[ -n "$TS_ID" ]]; then
-      pass "record-now.ts minted meetingId=$TS_ID"
-      STOP_OUT=$(npx tsx scripts/stop-now.ts --event-id "$TS_ID" 2>/dev/null | tail -1 || true)
-      TS_STOPPED=$(echo "$STOP_OUT" | jq -r '.stopped // 0' 2>/dev/null || echo 0)
-      if [[ "$TS_STOPPED" -ge 1 ]]; then
-        pass "stop-now.ts stopped $TS_STOPPED recording(s)"
-      else
-        skip "stop-now.ts returned stopped=$TS_STOPPED (script ran but no active rec)"
-      fi
-    else
-      skip "record-now.ts output didn't parse as JSON: $RECORD_OUT"
-    fi
-  fi
-  popd >/dev/null
-fi
+# 4. TS fallback regression — REMOVED in Phase 4. record-now.ts and stop-now.ts
+# no longer exist; the Swift lifecycle is the only path. The Phase 4 happy-path
+# end-to-end smoke (bridge_phase4_e2e.sh) supersedes this leg.
 
 printf "\nPhase 3 smoke complete.\n"

@@ -1112,19 +1112,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Mark clean shutdown so next launch skips expensive DB integrity check
     RewindDatabase.markCleanShutdown()
 
-    // Phase 3 graceful-shutdown hook. If the Swift minutes lifecycle is active
-    // (the default — `OMI_MINUTES_LIFECYCLE=swift`) and there's still a
-    // recording open, send a clean `stop_recording` via the MCP subprocess so
-    // Minutes finalises the WAV and persists its .md. Then persist state.json
-    // and shut the MCP subprocess down cleanly so we don't leave a zombie
-    // `npx minutes-mcp` behind.
+    // Phase 3 graceful-shutdown hook (Phase 4: now unconditional — Swift is
+    // the only lifecycle path). If a recording is still open, send a clean
+    // `stop_recording` via the MCP subprocess so Minutes finalises the WAV
+    // and persists its .md. Then persist state.json and shut the MCP
+    // subprocess down cleanly so we don't leave a zombie `npx minutes-mcp`
+    // behind.
     //
     // We bound this with a 10s ceiling: `applicationWillTerminate` runs on
     // the main thread and macOS will SIGKILL us if we don't return promptly.
     // The actor's own internal timeouts (stop_recording 30s) are a backstop
     // for the normal exit path — the ceiling here is defence-in-depth for
     // the termination path.
-    if MinutesLifecycleEnv.lifecycleMode() == .swift {
+    do {
       let sem = DispatchSemaphore(value: 0)
       Task.detached(priority: .userInitiated) {
         await MinutesLifecycleService.shared.gracefulShutdown()

@@ -4,16 +4,16 @@ The automation bridge is a local HTTP listener inside the Omi Desktop app,
 started when `OMI_ENABLE_LOCAL_AUTOMATION=1` (auto-set by `./run.sh --yolo`).
 It exposes read/write handles for Omi state plus the meeting-lifecycle
 surface we need to drive Omi from external tooling (curl, scheduled jobs,
-other apps, agent scripts during the minutes→omi consolidation).
+other apps, agent scripts).
 
 Default bind: `127.0.0.1:47777`. Override with `OMI_AUTOMATION_PORT` or the
 `--automation-port=<N>` launch arg. The listener is hand-rolled on top of
 `Network.framework` (`NWListener`) — there is no Vapor or Swift-NIO in this
 process. See `Desktop/Sources/DesktopAutomationBridge.swift` for the router
-and `Desktop/Sources/MinutesBridge.swift` for the Phase 1 minutes handlers.
+and `Desktop/Sources/MinutesBridge.swift` for the minutes-lifecycle handlers.
 
-Auth: none in Phase 1. The consumer today is curl + Rohit. Shared-secret
-auth is planned but scoped out until a second consumer shows up.
+Auth: none today. The consumer is curl + Rohit. Shared-secret auth is
+planned but scoped out until a second consumer shows up.
 
 Every response is JSON. Errors follow `{ "ok": false, "error": "<code>",
 "message": "<human>" }`. Success shapes vary by route.
@@ -46,23 +46,25 @@ Reads up to 50 recent Gmail emails and saves them as memories. No body.
 
 ---
 
-## Minutes lifecycle routes (Phase 1)
+## Minutes lifecycle routes
 
-All four wrap the minutes-agent TypeScript pipeline at
-`~/Developer/entropy-negative/minutes-agent/` — the bridge shells out to
-`scripts/record-now.ts`, `scripts/stop-now.ts`, and
-`scripts/v2/post-meeting-enrich.ts`. This is a deliberate shim: the
-consumer surface is Swift/HTTP, the implementation under the hood is still
-the proven TS capture pipeline. Phase 3 of `OMI_CONSOLIDATION.md` replaces
-the TS pipeline with a native Swift `PostMeetingService`; the HTTP contract
-stays identical.
+The four `/minutes/*` routes are served by the native Swift lifecycle actor
+in `Desktop/Sources/MinutesLifecycle.swift`. Phase 4 (2026-04-24) deleted the
+TS shell-out path (`scripts/record-now.ts`, `scripts/stop-now.ts`) and the
+`OMI_MINUTES_LIFECYCLE` env switch — Swift is the only implementation.
 
-The minutes-agent checkout path can be overridden via
-`OMI_MINUTES_AGENT_DIR`.
+The post-meeting enricher continues to run as a TS subprocess
+(`scripts/v2/post-meeting-enrich.ts`) — it's the one TS surface that survived
+Phase 4. The minutes-agent checkout path can be overridden via
+`OMI_MINUTES_AGENT_DIR` (used by the enricher invocation).
 
 ### `POST /minutes/start`
 
-Begin a capture. Wraps `scripts/record-now.ts --title "…"`.
+Begin a capture. Calls `MinutesLifecycleService.start(title:source:)`, which
+mints a `manual-<iso>` correlation handle, opens the per-meeting folder under
+`~/Library/CloudStorage/GoogleDrive-…/Meetings/YYYY/MM/`, and issues
+`start_recording` to the long-lived `npx minutes-mcp` subprocess via MCP
+JSON-RPC.
 
 Request:
 
@@ -74,8 +76,8 @@ Request:
 }
 ```
 
-- `meetingId`: ignored in Phase 1 (record-now mints its own `manual-<iso>` id
-  and returns it). Reserved for Phase 2 when calendar-driven sessions get a
+- `meetingId`: ignored — the actor mints its own `manual-<iso>` id and
+  returns it. Reserved for a future calendar-driven path that wants a
   predictable id up front.
 - `title`: defaults to `"Manual capture HH:MM"` if omitted.
 - `source`: `calendar` or `manual`. Informational; forwarded to the session
@@ -95,8 +97,7 @@ Response `200`:
 
 Errors:
 - `400 bad_request` — body is not valid JSON.
-- `500 capture_failed` — `record-now.ts` exited non-zero (stderr tail in `message`).
-- `500 capture_parse_failed` — `record-now.ts` succeeded but no JSON line on stdout.
+- `500 capture_failed` — `start_recording` MCP call failed or returned no PID.
 - `503 bridge_disabled` — bridge wasn't launched with `OMI_ENABLE_LOCAL_AUTOMATION=1`.
 
 ```bash
@@ -107,7 +108,11 @@ curl -sS -X POST -H 'Content-Type: application/json' \
 
 ### `POST /minutes/stop`
 
-Stop a capture and queue post-processing. Wraps `scripts/stop-now.ts --event-id <id>`.
+Stop a capture. Calls `MinutesLifecycleService.stop(meetingId:)`, which
+issues `stop_recording` to the MCP subprocess, parses the response (sync
+`**Saved:** <path>` or async `Job: <id>`), and either copies the transcript
+into the per-meeting folder synchronously or kicks off a 120s disk-poll
+that watches both the hinted path and `~/meetings/` for the finalised file.
 
 Request:
 
@@ -128,17 +133,19 @@ Response `200`:
 }
 ```
 
-- `transcriptPath` is the path the TS pipeline will write to. The file may
-  not exist yet at the instant `stop` returns — Minutes MCP finalises the
-  transcript asynchronously. Poll `GET /minutes/transcript` with the same
+- `transcriptPath` is the path the lifecycle actor will write to. The file
+  may not exist yet at the instant `stop` returns — Minutes MCP finalises
+  the transcript asynchronously, and the actor's disk-poll runs in the
+  background for up to 120s. Poll `GET /minutes/transcript` with the same
   `meetingId` to pick it up.
-- `audioPath` is null in Phase 1. Minutes bundles audio inside its internal
-  meeting file rather than emitting it as a separate sidecar.
+- `audioPath` is reserved for symmetry — Minutes bundles audio inside its
+  internal meeting file rather than emitting a separate sidecar, so this is
+  null today.
 
 Errors:
 - `400 bad_request` — invalid JSON body.
 - `404 unknown_meeting` — no session for that `meetingId`.
-- `500 stop_failed` — `stop-now.ts` exited non-zero.
+- `500 stop_failed` — `stop_recording` MCP call failed.
 
 ```bash
 curl -sS -X POST -H 'Content-Type: application/json' \
@@ -164,10 +171,10 @@ Response `200`:
 
 - `isFinal` is `true` iff the session has been stopped **and** the file
   exists on disk. A live, mid-recording request returns `isFinal: false` and
-  an empty string today — live transcript streaming happens inside the TS
-  pipeline's `transcript-watcher.ts`, which polls Minutes MCP directly. A
-  future route (`GET /minutes/transcript/live` or a websocket) can expose
-  that stream if needed; out of scope for Phase 1.
+  an empty string today — live transcript streaming was previously handled
+  by the (now-deleted) `scripts/transcript-watcher.ts`. A future route
+  (`GET /minutes/transcript/live` or a websocket) can expose that stream if
+  a consumer needs it.
 
 Errors:
 - `400 bad_request` — missing `meetingId` query parameter.
@@ -549,56 +556,42 @@ app relaunch with `OMI_CLAUDE_BIN_OVERRIDE=/nonexistent/path`.
 
 ## Guardrails
 
-- Don't add webhook callbacks, pagination, or auth in Phase 1.
+- Don't add webhook callbacks, pagination, or auth without a second
+  consumer asking for them.
 - Don't accumulate transcript text in Swift memory — read from disk.
-- (Phase 1 guardrail, now obsolete as of Phase 3.) Don't reach past the TS
-  pipeline into the Minutes MCP directly from Swift. Phase 3 changed this —
-  the default `/minutes/*` path now speaks MCP from inside Omi. See
-  § Phase 3 note below.
 
-## Phase 3 note — native Swift lifecycle + TS fallback
+## Implementation note — native Swift lifecycle (Phase 3 → Phase 4)
 
-As of Phase 3 (2026-04-23), the default implementation behind the
-`/minutes/start|stop|transcript|enrich` routes is a native Swift actor
-(`MinutesLifecycleService`, in `Desktop/Sources/MinutesLifecycle.swift`)
-that spawns `npx minutes-mcp` as a long-lived subprocess and speaks MCP
-JSON-RPC 2.0 over newline-delimited JSON on stdio — the same wire protocol
-the TS `@modelcontextprotocol/sdk` StdioClientTransport speaks. The Phase 1
-shell-out path to `scripts/record-now.ts` + `scripts/stop-now.ts` is retained
-as a fallback lane.
+The `/minutes/start|stop|transcript|enrich` routes are served by the native
+Swift actor `MinutesLifecycleService` in
+`Desktop/Sources/MinutesLifecycle.swift`. The actor spawns `npx minutes-mcp`
+as a long-lived subprocess and speaks MCP JSON-RPC 2.0 over newline-delimited
+JSON on stdio — same wire protocol the TS `@modelcontextprotocol/sdk`
+StdioClientTransport speaks.
 
-**Feature flag.** `OMI_MINUTES_LIFECYCLE` picks the implementation:
+**History.** Phase 1 (Apr 23) shipped the routes as TS shell-outs to
+`scripts/record-now.ts` / `scripts/stop-now.ts`. Phase 3 (Apr 23) added the
+native Swift actor as the default with `OMI_MINUTES_LIFECYCLE=ts` as an
+escape hatch. Phase 4 (Apr 24) deleted both the TS scripts and the
+env-switch fallback — Swift is now the only path.
 
-| Value | Behaviour |
-|---|---|
-| `swift` (default) | Native Swift actor. MCP subprocess lives inside Omi. Meeting state persists to `~/Library/Application Support/minutes-agent/state.json`. Graceful shutdown on app quit. |
-| `ts` | Phase 1 behaviour — each route shells out to `scripts/record-now.ts` / `scripts/stop-now.ts`. Unchanged byte-for-byte from Phase 1. |
+**Enricher stays in TS.** `POST /minutes/enrich` spawns
+`scripts/v2/post-meeting-enrich.ts` as a fire-and-forget subprocess via
+`MinutesLifecycleService.enrich(transcriptPath:meetingId:)`. The prompt +
+4-section output contract live in TS; a future phase may port them to
+native Swift HTTP against Anthropic's API.
 
-Set it in the same shell you launch `./run.sh --yolo` in. Default is `swift`
-once Phase 3 smoke tests pass. If you see a lifecycle regression on a build
-that shouldn't be breaking things, flip to `ts` for an instant fallback
-while the Swift side is investigated.
+**state.json schema.** The lifecycle persists to
+`~/Library/Application Support/minutes-agent/state.json` using the schema
+inherited from the now-archived `scripts/lib/state.ts`. The Swift actor
+adds three optional fields (`status`, `audioPath`, `transcriptPath`) on top
+of the TS shape; readers ignore unknown fields.
 
-**HTTP contract.** The four routes return byte-identical responses under
-both modes. The only observable difference from the consumer side is the
-Swift mode's graceful-shutdown behaviour on app quit (not visible via
-HTTP) and the fact that the MCP subprocess is owned by Omi instead of by
-the TS helper.
+**Phase 3 smoke.** `desktop/test/bridge_minutes_phase3.sh` exercises the
+full record → stop → transcript finalisation → enrich → `.enriched`
+sentinel cycle. See the script preamble for `SKIP_MCP`, `SKIP_ENRICH`,
+`SKIP_GRACEFUL` toggles.
 
-**Enricher stays in TS.** `POST /minutes/enrich` still spawns
-`scripts/v2/post-meeting-enrich.ts` in both modes — Phase 3 deliberately
-doesn't port the enricher. A future phase may, but the prompt + 4-section
-output contract are preserved in TS for now.
-
-**state.json compatibility.** Swift and TS read/write the same
-`~/Library/Application Support/minutes-agent/state.json` — same schema, same
-atomic-rename write pattern, same meeting folder layout. Switching between
-`OMI_MINUTES_LIFECYCLE=swift` and `=ts` doesn't require a migration. Swift
-adds three additive optional fields (`status`, `audioPath`, `transcriptPath`)
-that the TS side preserves on reads but doesn't use.
-
-**Phase 3 smoke.** `desktop/test/bridge_minutes_phase3.sh` asserts the full
-record → stop → transcript finalisation → enrich → `.enriched` sentinel
-cycle on the Swift path, plus a TS-fallback regression leg. See the script
-preamble for `SKIP_MCP`, `SKIP_ENRICH`, `SKIP_GRACEFUL`, `SKIP_TS_FALLBACK`
-toggles.
+**Phase 4 happy-path smoke.** `desktop/test/bridge_phase4_e2e.sh` runs a
+short (5s) end-to-end record → stop → enrich and asserts the enricher
+subprocess actually launches.
