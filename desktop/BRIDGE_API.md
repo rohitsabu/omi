@@ -428,6 +428,54 @@ SKIP_CALENDAR=1 ./desktop/test/bridge_calendar.sh
 
 - Don't add webhook callbacks, pagination, or auth in Phase 1.
 - Don't accumulate transcript text in Swift memory — read from disk.
-- Don't reach past the TS pipeline into the Minutes MCP directly from Swift.
-  Phase 3 replaces the TS pipeline; until then the TS pipeline is the only
-  author of meeting folder contents.
+- (Phase 1 guardrail, now obsolete as of Phase 3.) Don't reach past the TS
+  pipeline into the Minutes MCP directly from Swift. Phase 3 changed this —
+  the default `/minutes/*` path now speaks MCP from inside Omi. See
+  § Phase 3 note below.
+
+## Phase 3 note — native Swift lifecycle + TS fallback
+
+As of Phase 3 (2026-04-23), the default implementation behind the
+`/minutes/start|stop|transcript|enrich` routes is a native Swift actor
+(`MinutesLifecycleService`, in `Desktop/Sources/MinutesLifecycle.swift`)
+that spawns `npx minutes-mcp` as a long-lived subprocess and speaks MCP
+JSON-RPC 2.0 over newline-delimited JSON on stdio — the same wire protocol
+the TS `@modelcontextprotocol/sdk` StdioClientTransport speaks. The Phase 1
+shell-out path to `scripts/record-now.ts` + `scripts/stop-now.ts` is retained
+as a fallback lane.
+
+**Feature flag.** `OMI_MINUTES_LIFECYCLE` picks the implementation:
+
+| Value | Behaviour |
+|---|---|
+| `swift` (default) | Native Swift actor. MCP subprocess lives inside Omi. Meeting state persists to `~/Library/Application Support/minutes-agent/state.json`. Graceful shutdown on app quit. |
+| `ts` | Phase 1 behaviour — each route shells out to `scripts/record-now.ts` / `scripts/stop-now.ts`. Unchanged byte-for-byte from Phase 1. |
+
+Set it in the same shell you launch `./run.sh --yolo` in. Default is `swift`
+once Phase 3 smoke tests pass. If you see a lifecycle regression on a build
+that shouldn't be breaking things, flip to `ts` for an instant fallback
+while the Swift side is investigated.
+
+**HTTP contract.** The four routes return byte-identical responses under
+both modes. The only observable difference from the consumer side is the
+Swift mode's graceful-shutdown behaviour on app quit (not visible via
+HTTP) and the fact that the MCP subprocess is owned by Omi instead of by
+the TS helper.
+
+**Enricher stays in TS.** `POST /minutes/enrich` still spawns
+`scripts/v2/post-meeting-enrich.ts` in both modes — Phase 3 deliberately
+doesn't port the enricher. A future phase may, but the prompt + 4-section
+output contract are preserved in TS for now.
+
+**state.json compatibility.** Swift and TS read/write the same
+`~/Library/Application Support/minutes-agent/state.json` — same schema, same
+atomic-rename write pattern, same meeting folder layout. Switching between
+`OMI_MINUTES_LIFECYCLE=swift` and `=ts` doesn't require a migration. Swift
+adds three additive optional fields (`status`, `audioPath`, `transcriptPath`)
+that the TS side preserves on reads but doesn't use.
+
+**Phase 3 smoke.** `desktop/test/bridge_minutes_phase3.sh` asserts the full
+record → stop → transcript finalisation → enrich → `.enriched` sentinel
+cycle on the Swift path, plus a TS-fallback regression leg. See the script
+preamble for `SKIP_MCP`, `SKIP_ENRICH`, `SKIP_GRACEFUL`, `SKIP_TS_FALLBACK`
+toggles.
