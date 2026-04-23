@@ -889,6 +889,8 @@ actor MinutesLifecycleService {
     let folderTranscript = (rec.meetingFolder as NSString)
       .appendingPathComponent("transcript.md")
 
+    let startedAfter = Self.parseIso(rec.startedAt) ?? now.addingTimeInterval(-3600)
+
     if let src = parsed.filePath, FileManager.default.fileExists(atPath: src) {
       do {
         if FileManager.default.fileExists(atPath: folderTranscript) {
@@ -898,14 +900,22 @@ actor MinutesLifecycleService {
         markTranscriptFinal(meetingId: meetingId, transcriptPath: folderTranscript)
       } catch {
         log("MinutesLifecycle: failed to copy transcript \(src) → \(folderTranscript): \(error). Will poll.")
-        spawnFinalizationPoller(meetingId: meetingId, folderTranscript: folderTranscript, hintedPath: parsed.filePath)
+        spawnFinalizationPoller(
+          meetingId: meetingId,
+          folderTranscript: folderTranscript,
+          hintedPath: parsed.filePath,
+          startedAfter: startedAfter
+        )
       }
     } else {
-      // No synchronous path — poll.
+      // No synchronous path — poll. On Minutes CLI v0.10.0 stop_recording
+      // returns neither `**Saved:**` nor a `Job:` id, so the poller falls
+      // back to scanning ~/meetings/ for recently-modified .md files.
       spawnFinalizationPoller(
         meetingId: meetingId,
         folderTranscript: folderTranscript,
-        hintedPath: parsed.filePath
+        hintedPath: parsed.filePath,
+        startedAfter: startedAfter
       )
     }
 
@@ -1033,36 +1043,78 @@ actor MinutesLifecycleService {
     log("MinutesLifecycle: transcript finalised meetingId=\(meetingId) path=\(transcriptPath)")
   }
 
-  /// Background-poll for the finalised transcript. Checks:
-  ///   * `<hintedPath>` if set (Minutes' meetings dir)
-  ///   * `<folderTranscript>` on disk (someone else may have copied it)
-  /// every 2s for up to 120s. First hit copies → folderTranscript and marks
-  /// the session completed.
+  /// Background-poll for the finalised transcript. Checks, every 2s for up to
+  /// 120s:
+  ///   1. `<folderTranscript>` on disk (someone else may have copied it)
+  ///   2. `<hintedPath>` if stop_recording gave us one (v0.13.3 sync path)
+  ///   3. newest .md under `~/meetings/` modified after `startedAfter` — the
+  ///      Minutes CLI v0.10.0 fallback, where stop_recording returns neither
+  ///      path nor job id but Minutes still persists to its default output
+  ///      dir. See MINUTES_MCP_PROTOCOL.md § CLI version skew.
+  /// First hit copies → folderTranscript and marks the session completed.
   nonisolated private func spawnFinalizationPoller(
     meetingId: String,
     folderTranscript: String,
-    hintedPath: String?
+    hintedPath: String?,
+    startedAfter: Date
   ) {
     Task.detached(priority: .utility) { [weak self] in
       let deadline = Date().addingTimeInterval(120)
       while Date() < deadline {
         try? await Task.sleep(nanoseconds: 2_000_000_000)
+        // (1) someone else copied it
         if FileManager.default.fileExists(atPath: folderTranscript) {
           await self?.markTranscriptFinal(meetingId: meetingId, transcriptPath: folderTranscript)
           return
         }
+        // (2) hinted path from stop_recording
         if let src = hintedPath, FileManager.default.fileExists(atPath: src) {
           do {
             try FileManager.default.copyItem(atPath: src, toPath: folderTranscript)
             await self?.markTranscriptFinal(meetingId: meetingId, transcriptPath: folderTranscript)
             return
           } catch {
-            log("MinutesLifecycle: finalization poller copy failed: \(error)")
+            log("MinutesLifecycle: finalization poller copy failed (hinted): \(error)")
+          }
+        }
+        // (3) scan ~/meetings/ for recently-modified .md
+        if let src = Self.newestMeetingMarkdown(after: startedAfter),
+           FileManager.default.fileExists(atPath: src)
+        {
+          do {
+            try FileManager.default.copyItem(atPath: src, toPath: folderTranscript)
+            await self?.markTranscriptFinal(meetingId: meetingId, transcriptPath: folderTranscript)
+            log("MinutesLifecycle: finalization poller recovered transcript from ~/meetings/ (CLI v0.10.0 fallback): \(src)")
+            return
+          } catch {
+            log("MinutesLifecycle: finalization poller copy failed (~/meetings/ scan): \(error)")
           }
         }
       }
       log("MinutesLifecycle: finalization poller timed out after 120s for \(meetingId)")
     }
+  }
+
+  /// Scan `~/meetings/` for the newest `.md` file whose mtime is after
+  /// `after`. Returns nil if none exists or the dir is missing. Matches the
+  /// TS post-meeting.ts settle behaviour when Minutes CLI v0.10.0 reports
+  /// neither path nor job id on stop.
+  private static func newestMeetingMarkdown(after: Date) -> String? {
+    let dir = (NSHomeDirectory() as NSString).appendingPathComponent("meetings")
+    guard let entries = try? FileManager.default.contentsOfDirectory(atPath: dir)
+    else { return nil }
+    var best: (path: String, mtime: Date)? = nil
+    for entry in entries where entry.hasSuffix(".md") {
+      let full = (dir as NSString).appendingPathComponent(entry)
+      guard let attrs = try? FileManager.default.attributesOfItem(atPath: full),
+            let mtime = attrs[.modificationDate] as? Date,
+            mtime > after
+      else { continue }
+      if best == nil || mtime > best!.mtime {
+        best = (full, mtime)
+      }
+    }
+    return best?.path
   }
 
   // MARK: - Parsers (shared with the TS regexes for contract parity)
