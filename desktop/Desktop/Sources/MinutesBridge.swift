@@ -415,7 +415,6 @@ enum MinutesSubprocess {
     script: String,
     args: [String],
     captureStdout: Bool,
-    detach: Bool,
     timeoutSec: TimeInterval
   ) async -> Outcome {
     let root = minutesAgentRoot()
@@ -442,11 +441,6 @@ enum MinutesSubprocess {
         stderr: "spawn_failed: \(error.localizedDescription)",
         timedOut: false
       )
-    }
-
-    if detach {
-      // Fire-and-forget path (not used in Phase 1, but kept for future hooks).
-      return Outcome(exitCode: 0, stdout: "", stderr: "", timedOut: false)
     }
 
     // Poll exit + enforce timeout. We intentionally avoid Process.waitUntilExit

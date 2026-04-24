@@ -455,15 +455,15 @@ struct MinutesStateRecording: Codable {
   var confirmedByUser: Bool
   var source: String?
   var meetingTitle: String?
-  /// Phase 3 addition. Values: "active" | "finalizing" | "completed". The TS
-  /// side doesn't read this field — it's additive, for Swift bookkeeping.
+  /// Lifecycle state — one of "active" | "finalizing" | "completed".
+  /// Swift-only bookkeeping; not read by any external consumer.
   var status: String?
-  /// Phase 3 addition. Absolute path to the meeting audio .wav if Minutes
-  /// surfaces one (it doesn't today, but the field is reserved for symmetry
-  /// with the /minutes/stop response shape).
+  /// Absolute path to the meeting audio .wav if Minutes surfaces one
+  /// (it doesn't today, but the field is reserved for symmetry with the
+  /// /minutes/stop response shape).
   var audioPath: String?
-  /// Phase 3 addition. Absolute path to `<meetingFolder>/transcript.md`.
-  /// Cached once the transcript is copied out of Minutes' meetings dir.
+  /// Absolute path to `<meetingFolder>/transcript.md`. Cached once
+  /// the transcript is copied out of Minutes' meetings dir.
   var transcriptPath: String?
 }
 
@@ -738,11 +738,6 @@ enum MinutesLifecycleEnv {
     return env
   }
 
-  // Phase 4 (2026-04-24): the `LifecycleMode` enum and `lifecycleMode()`
-  // selector have been removed. Swift is the only lifecycle implementation
-  // — no `OMI_MINUTES_LIFECYCLE` switch, no TS fallback. If a regression
-  // ever forces a temporary fallback, expand `.phase-4-rollback.tar.gz` in
-  // minutes-agent/ and revert this file's history.
 }
 
 // MARK: - Lifecycle actor
@@ -943,8 +938,8 @@ actor MinutesLifecycleService {
 
   // MARK: - Enrichment (fire-and-forget)
 
-  /// Invoke the TS enricher. The enricher stays in TS for Phase 3 per the
-  /// plan; Swift just spawns it with an augmented env and returns the job id
+  /// Invoke the TS enricher. The enricher is the steady-state TS
+  /// component; Swift spawns it with an augmented env and returns the job id
   /// immediately. The caller gets 202 + jobId; output sidecars land in the
   /// meeting folder when the enricher finishes (30-90s typical).
   func enrich(transcriptPath: String, meetingId: String) -> UUID {
@@ -955,7 +950,6 @@ actor MinutesLifecycleService {
         script: "scripts/v2/post-meeting-enrich.ts",
         args: ["--meeting", transcriptPath, "--no-notify"],
         captureStdout: false,
-        detach: false,
         timeoutSec: 900  // generous cap; enrichment can take 1-2min on a cold Claude-cli
       )
       log("MinutesLifecycle: enrich job \(jobId) exited \(outcome.exitCode) meetingId=\(meetingId)")
@@ -1002,9 +996,8 @@ actor MinutesLifecycleService {
   // MARK: - Internals
 
   /// One-shot rehydration from `state.json` so we pick up any entries
-  /// written by a previous Swift run. (Pre-Phase-4, the TS lifecycle could
-  /// also write here — that path is gone, but the file format is preserved
-  /// for archival continuity.)
+  /// written by a previous Swift run. The on-disk file format is preserved
+  /// verbatim for archival continuity.
   private func hydrateIfNeeded() {
     if hasHydratedFromDisk { return }
     hasHydratedFromDisk = true
